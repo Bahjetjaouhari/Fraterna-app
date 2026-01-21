@@ -1,0 +1,372 @@
+@import "leaflet/dist/leaflet.css";
+@import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+
+@layer base {
+  :root {
+    /* Core Masonic Palette */
+    --navy: 220 60% 15%;
+    --navy-light: 220 50% 25%;
+    --navy-dark: 220 70% 8%;
+    --gold: 43 90% 55%;
+    --gold-light: 43 85% 70%;
+    --gold-dark: 43 95% 40%;
+    --ivory: 45 30% 96%;
+    --ivory-dark: 45 20% 90%;
+    
+    /* Semantic Colors */
+    --background: 0 0% 100%;
+    --foreground: 220 60% 15%;
+    
+    --card: 0 0% 100%;
+    --card-foreground: 220 60% 15%;
+    
+    --popover: 0 0% 100%;
+    --popover-foreground: 220 60% 15%;
+    
+    --primary: 43 90% 55%;
+    --primary-foreground: 220 70% 8%;
+    
+    --secondary: 220 50% 25%;
+    --secondary-foreground: 45 30% 96%;
+    
+    --muted: 45 20% 90%;
+    --muted-foreground: 220 30% 40%;
+    
+    --accent: 220 60% 15%;
+    --accent-foreground: 45 30% 96%;
+    
+    --destructive: 0 70% 50%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --success: 150 60% 40%;
+    --success-foreground: 0 0% 100%;
+    
+    --warning: 43 90% 55%;
+    --warning-foreground: 220 70% 8%;
+    
+    --border: 220 20% 85%;
+    --input: 220 20% 85%;
+    --ring: 43 90% 55%;
+    
+    --radius: 0.75rem;
+    
+    /* Map Theme (Dark) */
+    --map-bg: 220 70% 8%;
+    --map-surface: 220 60% 12%;
+    --map-text: 45 30% 96%;
+    --map-accent: 43 90% 55%;
+    
+    /* Gradients */
+    --gradient-gold: linear-gradient(135deg, hsl(43 90% 55%) 0%, hsl(43 95% 40%) 100%);
+    --gradient-navy: linear-gradient(180deg, hsl(220 60% 15%) 0%, hsl(220 70% 8%) 100%);
+    --gradient-masonic: linear-gradient(135deg, hsl(220 60% 15%) 0%, hsl(220 50% 25%) 50%, hsl(43 90% 55% / 0.1) 100%);
+    
+    /* Shadows */
+    --shadow-soft: 0 4px 20px -4px hsl(220 60% 15% / 0.15);
+    --shadow-gold: 0 4px 20px -4px hsl(43 90% 55% / 0.3);
+    --shadow-elevated: 0 8px 30px -8px hsl(220 60% 15% / 0.2);
+    
+    /* Sidebar */
+    --sidebar-background: 220 70% 8%;
+    --sidebar-foreground: 45 30% 96%;
+    --sidebar-primary: 43 90% 55%;
+    --sidebar-primary-foreground: 220 70% 8%;
+    --sidebar-accent: 220 60% 15%;
+    --sidebar-accent-foreground: 45 30% 96%;
+    --sidebar-border: 220 50% 20%;
+    --sidebar-ring: 43 90% 55%;
+  }
+
+  .dark {
+    --background: 220 70% 8%;
+    --foreground: 45 30% 96%;
+    
+    --card: 220 60% 12%;
+    --card-foreground: 45 30% 96%;
+    
+    --popover: 220 60% 12%;
+    --popover-foreground: 45 30% 96%;
+    
+    --primary: 43 90% 55%;
+    --primary-foreground: 220 70% 8%;
+    
+    --secondary: 220 50% 20%;
+    --secondary-foreground: 45 30% 96%;
+    
+    --muted: 220 40% 18%;
+    --muted-foreground: 220 20% 60%;
+    
+    --accent: 220 50% 20%;
+    --accent-foreground: 45 30% 96%;
+    
+    --destructive: 0 60% 45%;
+    --destructive-foreground: 0 0% 100%;
+    
+    --border: 220 40% 20%;
+    --input: 220 40% 20%;
+    --ring: 43 90% 55%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: 'Inter', sans-serif;
+  }
+
+  h1, h2, h3, h4, h5, h6 {
+    font-family: 'Cinzel', serif;
+  }
+}
+
+@layer components {
+  /* Masonic Button Variants */
+  .btn-masonic {
+    @apply relative overflow-hidden font-medium tracking-wide;
+    background: var(--gradient-gold);
+    transition: all 0.3s ease;
+  }
+  
+  .btn-masonic:hover {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-gold);
+  }
+  
+  .btn-masonic-outline {
+    @apply border-2 bg-transparent;
+    border-color: hsl(var(--gold));
+    color: hsl(var(--gold));
+  }
+  
+  .btn-masonic-outline:hover {
+    background: hsl(var(--gold) / 0.1);
+  }
+  
+  /* Card Styles */
+  .card-masonic {
+    @apply rounded-xl border backdrop-blur-sm;
+    background: hsl(var(--card) / 0.95);
+    box-shadow: var(--shadow-soft);
+  }
+  
+  .card-masonic-dark {
+    @apply rounded-xl border;
+    background: hsl(var(--navy));
+    border-color: hsl(var(--gold) / 0.2);
+    box-shadow: var(--shadow-elevated);
+  }
+  
+  /* Map Container */
+  .map-container {
+    @apply relative w-full h-full overflow-hidden;
+    background: hsl(var(--map-bg));
+  }
+  
+  /* Avatar Masonic */
+  .avatar-masonic {
+    @apply relative rounded-full border-2 overflow-hidden;
+    border-color: hsl(var(--gold));
+    box-shadow: var(--shadow-gold);
+  }
+  
+  .avatar-masonic.stealth {
+    opacity: 0.4;
+    border-color: hsl(var(--muted-foreground));
+  }
+  
+  /* Verification Badge */
+  .badge-verified {
+    @apply inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium;
+    background: hsl(var(--success) / 0.15);
+    color: hsl(var(--success));
+  }
+  
+  .badge-pending {
+    @apply inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium;
+    background: hsl(var(--warning) / 0.15);
+    color: hsl(var(--warning));
+  }
+  
+  .badge-blocked {
+    @apply inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium;
+    background: hsl(var(--destructive) / 0.15);
+    color: hsl(var(--destructive));
+  }
+  
+  /* Input Masonic */
+  .input-masonic {
+    @apply w-full rounded-lg border px-4 py-3 text-base transition-all;
+    border-color: hsl(var(--border));
+    background: hsl(var(--background));
+  }
+  
+  .input-masonic:focus {
+    outline: none;
+    border-color: hsl(var(--gold));
+    box-shadow: 0 0 0 3px hsl(var(--gold) / 0.15);
+  }
+  
+  /* Navigation */
+  .nav-masonic {
+    @apply fixed bottom-0 left-0 right-0 z-50;
+    background: hsl(var(--navy));
+    border-top: 1px solid hsl(var(--gold) / 0.2);
+  }
+  
+  /* Scrollbar */
+  .scrollbar-masonic::-webkit-scrollbar {
+    width: 6px;
+  }
+  
+  .scrollbar-masonic::-webkit-scrollbar-track {
+    background: hsl(var(--muted));
+    border-radius: 3px;
+  }
+  
+  .scrollbar-masonic::-webkit-scrollbar-thumb {
+    background: hsl(var(--gold) / 0.5);
+    border-radius: 3px;
+  }
+  
+  .scrollbar-masonic::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--gold) / 0.7);
+  }
+}
+
+@layer utilities {
+  /* Text Gradients */
+  .text-gradient-gold {
+    background: var(--gradient-gold);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+  
+  /* Glassmorphism */
+  .glass {
+    @apply backdrop-blur-md;
+    background: hsl(var(--background) / 0.8);
+  }
+  
+  .glass-dark {
+    @apply backdrop-blur-md;
+    background: hsl(var(--navy) / 0.9);
+  }
+  
+  /* Animation Classes */
+  .animate-fade-in {
+    animation: fadeIn 0.5s ease-out forwards;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.5s ease-out forwards;
+  }
+  
+  .animate-pulse-gold {
+    animation: pulseGold 2s ease-in-out infinite;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideUp {
+    from { 
+      opacity: 0;
+      transform: translateY(20px);
+    }
+    to { 
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+  
+  @keyframes pulseGold {
+    0%, 100% { 
+      box-shadow: 0 0 0 0 hsl(43 90% 55% / 0.4);
+    }
+    50% { 
+      box-shadow: 0 0 0 10px hsl(43 90% 55% / 0);
+    }
+  }
+  
+  /* Safe Area Padding for Mobile */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0);
+  }
+  
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0);
+  }
+}
+
+/* FIX: Tailwind rompe los tiles de Leaflet con img { max-width: 100% } */
+.leaflet-container img {
+  max-width: none !important;
+}
+
+.leaflet-container .leaflet-tile {
+  max-width: none !important;
+  max-height: none !important;
+}
+
+/* Leaflet necesita que el contenedor tenga tamaño real */
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+}
+/* ===== Leaflet marker styles (QH) ===== */
+.qh-marker {
+  background: transparent;
+  border: none;
+}
+
+.qh-pin {
+  width: 16px;
+  height: 16px;
+  border-radius: 9999px;
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.35);
+}
+
+.qh-pin--me {
+  width: 18px;
+  height: 18px;
+  background: rgba(212, 175, 55, 0.95); /* gold */
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.35), 0 0 18px rgba(212,175,55,0.35);
+}
+
+.qh-pin--bro {
+  background: rgba(56, 189, 248, 0.95); /* cyan */
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.35);
+}
+
+.qh-pin--stealth {
+  background: rgba(148, 163, 184, 0.9); /* gray */
+  box-shadow: 0 0 0 3px rgba(0,0,0,0.35);
+  outline: 2px dashed rgba(245, 158, 11, 0.9); /* warning */
+  outline-offset: 2px;
+}
+html, body, #root {
+  height: 100%;
+}
+
+/* iOS Safari fallback */
+@supports (-webkit-touch-callout: none) {
+  body {
+    min-height: -webkit-fill-available;
+  }
+}
+:root{
+  --bottom-nav-h: 60px; /* ajustaremos este número */
+}
