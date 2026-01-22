@@ -1,4 +1,4 @@
-// supabase/functions/admin-role/index.ts
+import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 type Body = {
@@ -20,122 +20,104 @@ function json(status: number, payload: unknown) {
   });
 }
 
-Deno.serve(async (req) => {
-  // ✅ CORS preflight
+serve(async (req) => {
+  // CORS preflight
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
-
-  if (req.method !== "POST") {
-    return json(405, { error: "Method not allowed" });
+    return new Response(null, { headers: corsHeaders });
   }
 
   try {
-    const SUPABASE_URL = Deno.env.get("SUPABASE_URL") ?? "";
-    const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? "";
-    const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
+    const SUPABASE_URL = Deno.env.get("SUPABASE_URL");
+    const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
 
-    if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !ANON_KEY) {
-      return json(500, {
-        error:
-          "Missing env vars. Need SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY",
-      });
+    if (!SUPABASE_URL || !SUPABASE_SERVICE_ROLE_KEY) {
+      console.error("Missing Supabase env vars");
+      return json(500, { error: "Server misconfigured" });
     }
 
-    // Token del usuario que llama (tu admin)
-    const authHeader = req.headers.get("Authorization") ?? "";
+    const authHeader = req.headers.get("authorization");
     if (!authHeader) {
       return json(401, { error: "Missing Authorization header" });
     }
 
-    // Cliente con permisos de admin (service role) para escribir user_roles/profiles
-    const adminClient = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
-      auth: { persistSession: false },
-    });
+    // Cliente ADMIN (service role)
+    const adminClient = createClient(
+      SUPABASE_URL,
+      SUPABASE_SERVICE_ROLE_KEY,
+      {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+        },
+      }
+    );
 
-    // Cliente “normal” para validar el JWT del usuario que llama
-    const userClient = createClient(SUPABASE_URL, ANON_KEY, {
-      global: { headers: { Authorization: authHeader } },
-      auth: { persistSession: false },
-    });
+    // Validar que el request venga de un usuario autenticado
+    const token = authHeader.replace("Bearer ", "");
 
-    const { data: userData, error: userErr } = await userClient.auth.getUser();
-    if (userErr || !userData?.user) {
-      return json(401, { error: "Invalid user token", details: userErr?.message });
+    const {
+      data: { user },
+      error: authError,
+    } = await adminClient.auth.getUser(token);
+
+    if (authError || !user) {
+      console.error("Auth error:", authError);
+      return json(401, { error: "Invalid token" });
     }
 
-    const callerId = userData.user.id;
+    const body: Body = await req.json();
 
-    // ✅ Verifica que el que llama es admin (user_roles.role = 'admin')
-    const { data: callerRole, error: callerRoleErr } = await adminClient
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", callerId)
-      .maybeSingle();
+    const { action, targetUserId } = body;
 
-    if (callerRoleErr) {
-      return json(500, {
-        error: "Failed checking caller role",
-        details: callerRoleErr.message,
-      });
+    if (!action || !targetUserId) {
+      return json(400, { error: "Missing parameters" });
     }
 
-    const isAdmin = callerRole?.role === "admin";
-    if (!isAdmin) {
-      return json(403, { error: "Forbidden: admin only" });
-    }
-
-    const body = (await req.json().catch(() => ({}))) as Body;
-    const action = body.action;
-    const targetUserId = body.targetUserId;
-
-    if (!action || (action !== "grant" && action !== "revoke")) {
-      return json(400, { error: "Invalid action. Use 'grant' or 'revoke'." });
-    }
-    if (!targetUserId) {
-      return json(400, { error: "Missing targetUserId" });
-    }
-
-    // Opcional: evitar que te quites admin a ti mismo
-    if (action === "revoke" && targetUserId === callerId) {
-      return json(400, { error: "No puedes quitarte admin a ti mismo." });
-    }
-
+    // ===== GRANT ADMIN =====
     if (action === "grant") {
-      // UPSERT en user_roles
-      const { error: upErr } = await adminClient
+      const { error } = await adminClient
         .from("user_roles")
-        .upsert({ user_id: targetUserId, role: "admin" }, { onConflict: "user_id" });
+        .upsert({
+          user_id: targetUserId,
+          role: "admin",
+        });
 
-      if (upErr) {
-        return json(500, { error: "Failed to grant admin", details: upErr.message });
+      if (error) {
+        console.error(error);
+        return json(500, { error: "Failed to grant admin" });
       }
 
-      // Sincroniza profiles.role si lo usas en UI (opcional pero útil)
-      await adminClient.from("profiles").update({ role: "admin" }).eq("id", targetUserId);
+      await adminClient
+        .from("profiles")
+        .update({ role: "admin" })
+        .eq("id", targetUserId);
 
       return json(200, { ok: true, action: "grant", targetUserId });
     }
 
+    // ===== REVOKE ADMIN =====
     if (action === "revoke") {
-      // Si solo manejas un rol por usuario, puedes borrar la fila:
-      const { error: delErr } = await adminClient
+      const { error } = await adminClient
         .from("user_roles")
         .delete()
         .eq("user_id", targetUserId);
 
-      if (delErr) {
-        return json(500, { error: "Failed to revoke admin", details: delErr.message });
+      if (error) {
+        console.error(error);
+        return json(500, { error: "Failed to revoke admin" });
       }
 
-      // Sincroniza profiles.role (opcional)
-      await adminClient.from("profiles").update({ role: "user" }).eq("id", targetUserId);
+      await adminClient
+        .from("profiles")
+        .update({ role: "user" })
+        .eq("id", targetUserId);
 
       return json(200, { ok: true, action: "revoke", targetUserId });
     }
 
-    return json(400, { error: "Unhandled action" });
+    return json(400, { error: "Invalid action" });
   } catch (e) {
-    return json(500, { error: "Unexpected error", details: String(e) });
+    console.error("Unhandled error:", e);
+    return json(500, { error: "Unexpected error" });
   }
 });

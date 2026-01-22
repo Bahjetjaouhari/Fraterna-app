@@ -24,7 +24,7 @@ type ProfileRow = {
   id: string;
   email: string | null;
   full_name: string | null;
-  role: string | null; // lo usas para mostrar en UI (si lo tienes)
+  role: string | null;
   is_active: boolean | null;
   created_at: string | null;
 };
@@ -33,6 +33,16 @@ const SUPER_ADMIN_IDS = (import.meta.env.VITE_SUPER_ADMIN_IDS ?? "")
   .split(",")
   .map((s: string) => s.trim())
   .filter(Boolean);
+
+type AdminUserBody = {
+  action: "ban" | "unban";
+  targetUserId: string;
+};
+
+type AdminRoleBody = {
+  action: "grant" | "revoke";
+  targetUserId: string;
+};
 
 export const AdminPanel: React.FC = () => {
   const { isAdmin } = useAuth();
@@ -45,18 +55,55 @@ export const AdminPanel: React.FC = () => {
   const [usersRefreshing, setUsersRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
 
-  const isProtectedUser = (userId: string) => {
-    return SUPER_ADMIN_IDS.includes(userId);
+  const isProtectedUser = (userId: string) => SUPER_ADMIN_IDS.includes(userId);
+
+  const getAccessTokenOrThrow = async (): Promise<string> => {
+    // 1) intenta leer sesión
+    const { data: s1, error: e1 } = await supabase.auth.getSession();
+    if (e1) throw e1;
+
+    if (s1.session?.access_token) return s1.session.access_token;
+
+    // 2) si no hay, intenta refrescar
+    const { data: s2, error: e2 } = await supabase.auth.refreshSession();
+    if (e2) throw e2;
+
+    const token = s2.session?.access_token;
+    if (!token) throw new Error("No hay sesión activa (sin access_token). Vuelve a iniciar sesión.");
+    return token;
   };
 
-  const getAccessTokenOrThrow = async () => {
-    const { data, error } = await supabase.auth.getSession();
-    if (error) throw error;
+  /**
+   * ✅ FIX 401:
+   * Supabase Edge Functions requiere:
+   * - Authorization: Bearer <token>
+   * - apikey: <anon key>
+   */
+  const invokeWithAuth = async <TBody extends object, TResp = any>(
+    functionName: string,
+    body: TBody
+  ) => {
+    const token = await getAccessTokenOrThrow();
 
-    const token = data.session?.access_token;
-    if (!token) throw new Error("No hay sesión activa (sin access_token).");
+    const { data, error } = await supabase.functions.invoke(functionName, {
+      body,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: import.meta.env.VITE_SUPABASE_ANON_KEY,
+      },
+    });
 
-    return token;
+    if (error) {
+      console.error(`[${functionName}] invoke error:`, error);
+      throw new Error(`${functionName}: ${(error as any)?.message ?? "Edge Function error"}`);
+    }
+
+    if ((data as any)?.error) {
+      console.error(`[${functionName}] response error:`, data);
+      throw new Error(`${functionName}: ${(data as any).error}`);
+    }
+
+    return data as TResp;
   };
 
   const loadUsers = async (opts?: { silent?: boolean }) => {
@@ -106,28 +153,12 @@ export const AdminPanel: React.FC = () => {
         id: "ban-unban",
       });
 
-      const token = await getAccessTokenOrThrow();
+      const body: AdminUserBody = {
+        action: shouldBan ? "ban" : "unban",
+        targetUserId,
+      };
 
-      const { data, error } = await supabase.functions.invoke("admin-user", {
-        body: {
-          action: shouldBan ? "ban" : "unban",
-          targetUserId,
-        },
-        headers: {
-          Authorization: `Bearer ${token}`,
-        },
-      });
-
-      if (error) {
-        console.error(error);
-        toast.error("No se pudo ejecutar la acción (Edge Function)", { id: "ban-unban" });
-        return;
-      }
-
-      if ((data as any)?.error) {
-        toast.error(String((data as any)?.error), { id: "ban-unban" });
-        return;
-      }
+      await invokeWithAuth<AdminUserBody>("admin-user", body);
 
       toast.success(shouldBan ? "Usuario baneado" : "Usuario desbaneado", {
         id: "ban-unban",
@@ -136,7 +167,8 @@ export const AdminPanel: React.FC = () => {
       await loadUsers({ silent: true });
     } catch (e) {
       console.error(e);
-      toast.error("Ocurrió un error inesperado", { id: "ban-unban" });
+      const msg = e instanceof Error ? e.message : "Ocurrió un error inesperado";
+      toast.error(msg, { id: "ban-unban" });
     }
   };
 
@@ -160,34 +192,19 @@ export const AdminPanel: React.FC = () => {
         id: "admin-role",
       });
 
-      const token = await getAccessTokenOrThrow();
+      const body: AdminRoleBody = {
+        action: makeAdmin ? "grant" : "revoke",
+        targetUserId,
+      };
 
-      const { data, error } = await supabase.functions.invoke("admin-role", {
-        body: {
-          action: makeAdmin ? "grant" : "revoke",
-          targetUserId,
-        },
-        headers: {
-          Authorization: `Bearer ${token}`, // ✅ CLAVE para evitar el 401
-        },
-      });
-
-      if (error) {
-        console.error(error);
-        toast.error("No se pudo cambiar el rol (Edge Function)", { id: "admin-role" });
-        return;
-      }
-
-      if ((data as any)?.error) {
-        toast.error(String((data as any)?.error), { id: "admin-role" });
-        return;
-      }
+      await invokeWithAuth<AdminRoleBody>("admin-role", body);
 
       toast.success(makeAdmin ? "Admin asignado" : "Admin removido", { id: "admin-role" });
       await loadUsers({ silent: true });
     } catch (e) {
       console.error(e);
-      toast.error("No se pudo cambiar el rol (Edge Function)", { id: "admin-role" });
+      const msg = e instanceof Error ? e.message : "No se pudo cambiar el rol (Edge Function)";
+      toast.error(msg, { id: "admin-role" });
     }
   };
 

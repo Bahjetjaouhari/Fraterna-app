@@ -18,6 +18,7 @@ interface Profile {
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
+  is_active?: boolean; // 👈 IMPORTANTE
 }
 
 interface UserRole {
@@ -51,6 +52,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
+  const forceLogoutBannedUser = async () => {
+    await supabase.auth.signOut();
+    setUser(null);
+    setSession(null);
+    setProfile(null);
+    setRoles([]);
+  };
+
   const fetchProfile = async (userId: string) => {
     try {
       const { data: profileData, error: profileError } = await supabase
@@ -64,11 +73,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         return;
       }
 
+      // 🔴 BLOQUEO REAL DEL USUARIO BANEADO
+      if (profileData && profileData.is_active === false) {
+        console.warn('Usuario baneado detectado, cerrando sesión');
+        await forceLogoutBannedUser();
+        alert('Tu cuenta ha sido suspendida. Contacta a un administrador.');
+        return;
+      }
+
       if (profileData) {
         setProfile(profileData as Profile);
       }
 
-      // Fetch roles
+      // Roles
       const { data: rolesData, error: rolesError } = await supabase
         .from('user_roles')
         .select('*')
@@ -92,7 +109,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   useEffect(() => {
-    // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -102,14 +118,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setIsLoading(false);
     });
 
-    // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (event, session) => {
+      async (_event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
 
         if (session?.user) {
-          // Small delay to ensure trigger has run
           setTimeout(() => fetchProfile(session.user.id), 100);
         } else {
           setProfile(null);
@@ -123,20 +137,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     return () => subscription.unsubscribe();
   }, []);
 
-  const signUp = async (
-    email: string,
-    password: string,
-    metadata: Record<string, string>
-  ) => {
+  const signUp = async (email: string, password: string, metadata: Record<string, string>) => {
     try {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: {
-          data: metadata,
-        },
+        options: { data: metadata },
       });
-
       return { error: error as Error | null };
     } catch (error) {
       return { error: error as Error };
@@ -145,11 +152,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signIn = async (email: string, password: string) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
-      });
-
+      const { error } = await supabase.auth.signInWithPassword({ email, password });
       return { error: error as Error | null };
     } catch (error) {
       return { error: error as Error };
@@ -190,7 +193,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (context === undefined) {
+  if (!context) {
     throw new Error('useAuth must be used within an AuthProvider');
   }
   return context;
