@@ -35,7 +35,12 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
         {children}
       </main>
 
-      {showNav && <BottomNav isAdmin={isAdmin} />}
+      {showNav && (
+  <div id="bottom-nav">
+    <BottomNav isAdmin={isAdmin} />
+  </div>
+)}
+
     </div>
   );
 };
