@@ -7,8 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 
-import { MapContainer, TileLayer, Marker, Popup } from "react-leaflet";
-import L, { Map as LeafletMap } from "leaflet";
+import maplibregl, { Map as MapLibreMap, Marker as MapLibreMarker, Popup as MapLibrePopup } from "maplibre-gl";
 
 // -----------------------------
 // Utils
@@ -60,101 +59,56 @@ export const MapView: React.FC = () => {
 
   const [bottomNavH, setBottomNavH] = useState(80);
 
-useEffect(() => {
-  const el = document.getElementById("bottom-nav");
-  if (!el) return;
-
-  const measure = () => {
-    const h = Math.round(el.getBoundingClientRect().height || 0);
-    if (h > 0) setBottomNavH(h);
-  };
-
-  // medir inmediatamente
-  measure();
-
-  // ResizeObserver
-  const ro = new ResizeObserver(measure);
-  ro.observe(el);
-
-  // Eventos normales
-  window.addEventListener("resize", measure);
-  window.addEventListener("orientationchange", measure);
-
-  // iOS Safari fix (reintentos cortos)
-  const t1 = setTimeout(measure, 200);
-  const t2 = setTimeout(measure, 600);
-  const t3 = setTimeout(measure, 1200);
-
-  // refuerzo temporal (5s)
-  const start = Date.now();
-  const interval = setInterval(() => {
-    measure();
-    if (Date.now() - start > 5000) clearInterval(interval);
-  }, 400);
-
-  return () => {
-    ro.disconnect();
-    window.removeEventListener("resize", measure);
-    window.removeEventListener("orientationchange", measure);
-    clearTimeout(t1);
-    clearTimeout(t2);
-    clearTimeout(t3);
-    clearInterval(interval);
-  };
-}, []);
-
-
-  // ✅ Offset inferior REAL: bottomNav + safe-area + margen
-  const bottomOffset = `calc(${bottomNavH}px + env(safe-area-inset-bottom, 0px) + 2px)`;
-
   // Tu ubicación en memoria
   const [myLat, setMyLat] = useState<number | null>(null);
   const [myLng, setMyLng] = useState<number | null>(null);
 
-  // Referencia al mapa
-  const mapRef = useRef<LeafletMap | null>(null);
+  // MapLibre refs
+  const mapDivRef = useRef<HTMLDivElement | null>(null);
+  const mapRef = useRef<MapLibreMap | null>(null);
+
+  // Markers refs (para actualizar sin recrear todo)
+  const myMarkerRef = useRef<MapLibreMarker | null>(null);
+  const brotherMarkersByIdRef = useRef<Record<string, MapLibreMarker>>({});
 
   // Anti-spam de alertas
   const lastNotifiedRef = useRef<Record<string, number>>({});
 
   // -----------------------------
-  // Icons (sin imágenes)
+  // Bottom nav measure
   // -----------------------------
-  const myIcon = useMemo(() => {
-    return L.divIcon({
-      className: "",
-      html: `
-        <div style="
-          width: 18px; height: 18px;
-          border-radius: 999px;
-          background: #d4af37;
-          border: 3px solid rgba(0,0,0,0.35);
-          box-shadow: 0 0 0 6px rgba(212,175,55,0.25);
-        "></div>
-      `,
-      iconSize: [18, 18],
-      iconAnchor: [9, 9],
-      popupAnchor: [0, -10],
-    });
+  useEffect(() => {
+    const el = document.getElementById("bottom-nav");
+    if (!el) return;
+
+    const measure = () => {
+      const h = Math.round(el.getBoundingClientRect().height || 0);
+      if (h > 0) setBottomNavH(h);
+    };
+
+    measure();
+
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+
+    window.addEventListener("resize", measure);
+    window.addEventListener("orientationchange", measure);
+
+    const t1 = setTimeout(measure, 200);
+    const t2 = setTimeout(measure, 600);
+    const t3 = setTimeout(measure, 1200);
+
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", measure);
+      window.removeEventListener("orientationchange", measure);
+      clearTimeout(t1);
+      clearTimeout(t2);
+      clearTimeout(t3);
+    };
   }, []);
 
-  const brotherIcon = useMemo(() => {
-    return L.divIcon({
-      className: "",
-      html: `
-        <div style="
-          width: 16px; height: 16px;
-          border-radius: 999px;
-          background: #3b82f6;
-          border: 3px solid rgba(0,0,0,0.35);
-          box-shadow: 0 0 0 5px rgba(59,130,246,0.20);
-        "></div>
-      `,
-      iconSize: [16, 16],
-      iconAnchor: [8, 8],
-      popupAnchor: [0, -10],
-    });
-  }, []);
+  const bottomOffset = `calc(${bottomNavH}px + env(safe-area-inset-bottom, 0px) + 2px)`;
 
   // -----------------------------
   // Perfil -> stealthMode
@@ -162,44 +116,6 @@ useEffect(() => {
   useEffect(() => {
     if (profile) setStealthMode(profile.stealth_mode);
   }, [profile]);
-
-  // Si sales de stealth, actualiza ubicación 1 vez
-  useEffect(() => {
-    const prev = prevStealthRef.current;
-    prevStealthRef.current = stealthMode;
-
-    if (prev === true && stealthMode === false) {
-      setTimeout(() => updateMyLocation(), 800);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stealthMode]);
-
-  // Auto update cada 30s si tracking ON y no stealth
-  useEffect(() => {
-    if (!user) return;
-    if (stealthMode) return;
-    // @ts-ignore
-    if (profile?.tracking_enabled === false) return;
-
-    const interval = setInterval(() => {
-      if (!isUpdatingLocation) updateMyLocation();
-    }, 30000);
-
-    return () => clearInterval(interval);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, stealthMode, profile?.tracking_enabled, isUpdatingLocation]);
-
-  // Al entrar a mapa: intenta ubicación inicial
-  useEffect(() => {
-    if (!user) return;
-    if (stealthMode) return;
-    // @ts-ignore
-    if (profile?.tracking_enabled === false) return;
-
-    const t = setTimeout(() => updateMyLocation(), 800);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stealthMode]);
 
   // -----------------------------
   // Proximity alerts
@@ -213,7 +129,6 @@ useEffect(() => {
 
     // @ts-ignore
     const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
-
     if (radiusKm === 0) return;
     if (myLat == null || myLng == null) return;
 
@@ -235,6 +150,85 @@ useEffect(() => {
         }
       }
     }
+  };
+
+  // -----------------------------
+  // Centro inicial (si aún no hay coords => Venezuela)
+  // -----------------------------
+  const initialCenter = useMemo<[number, number]>(() => {
+    // MapLibre usa [lng, lat]
+    if (myLat != null && myLng != null) return [myLng, myLat];
+    return [-66.9, 8.6];
+  }, [myLat, myLng]);
+
+  // -----------------------------
+  // Init MapLibre (1 sola vez)
+  // -----------------------------
+  useEffect(() => {
+    if (!mapDivRef.current) return;
+    if (mapRef.current) return;
+
+    const map = new maplibregl.Map({
+      container: mapDivRef.current,
+      // CARTO Voyager vector style (gratis)
+      style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+      center: initialCenter,
+      zoom: 6,
+      minZoom: 3,
+      maxZoom: 18,
+      // 🔥 claves anti-lag/parpadeo
+      fadeDuration: 0,
+      renderWorldCopies: false,
+      attributionControl: true,
+      // UX
+      dragRotate: false,
+      pitchWithRotate: false,
+      touchPitch: false,
+    });
+
+    mapRef.current = map;
+
+    // Resize seguro
+    const resize = () => map.resize();
+    window.addEventListener("resize", resize);
+    window.addEventListener("orientationchange", resize);
+
+    map.on("load", () => {
+      // Fuerza un resize inicial por si el layout cambia
+      requestAnimationFrame(() => map.resize());
+    });
+
+    return () => {
+      window.removeEventListener("resize", resize);
+      window.removeEventListener("orientationchange", resize);
+      map.remove();
+      mapRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Cada vez que cambie el layout (bottom nav), resize al mapa
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    requestAnimationFrame(() => map.resize());
+  }, [bottomNavH]);
+
+  // -----------------------------
+  // Center helper (zoom máximo)
+  // -----------------------------
+  const centerOn = (lat: number, lng: number) => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    map.flyTo({
+      center: [lng, lat],
+      zoom: 18,
+      duration: 800,
+      essential: true,
+    });
+
+    requestAnimationFrame(() => map.resize());
   };
 
   // -----------------------------
@@ -286,9 +280,92 @@ useEffect(() => {
   };
 
   // -----------------------------
-  // Location + map centering
+  // Markers (MapLibre) - ultra fluido
   // -----------------------------
-  const updateMyLocation = async () => {
+  const makeDotEl = (variant: "me" | "bro") => {
+    const el = document.createElement("div");
+    el.style.width = variant === "me" ? "18px" : "16px";
+    el.style.height = variant === "me" ? "18px" : "16px";
+    el.style.borderRadius = "999px";
+    el.style.background = variant === "me" ? "#d4af37" : "#3b82f6";
+    el.style.border = "3px solid rgba(0,0,0,0.35)";
+    el.style.boxShadow =
+      variant === "me" ? "0 0 0 6px rgba(212,175,55,0.25)" : "0 0 0 5px rgba(59,130,246,0.20)";
+    el.style.cursor = "pointer";
+    return el;
+  };
+
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+
+    // Yo
+    if (myLat != null && myLng != null) {
+      if (!myMarkerRef.current) {
+        myMarkerRef.current = new maplibregl.Marker({ element: makeDotEl("me") })
+          .setLngLat([myLng, myLat])
+          .addTo(map);
+      } else {
+        myMarkerRef.current.setLngLat([myLng, myLat]);
+      }
+    }
+
+    // Hermanos (diff update: crear/actualizar/remover sin recrear todo)
+    const nextIds = new Set<string>();
+
+    for (const b of brothers) {
+      if (!b.lat || !b.lng) continue;
+      if (b.profile?.stealth_mode) continue;
+
+      nextIds.add(b.user_id);
+
+      const existing = brotherMarkersByIdRef.current[b.user_id];
+
+      if (existing) {
+        // Solo actualiza posición (no recrea)
+        existing.setLngLat([b.lng, b.lat]);
+        continue;
+      }
+
+      // Crear nuevo marker si no existe
+      const el = makeDotEl("bro");
+      el.addEventListener("click", () => setSelectedBrother(b.user_id));
+
+      const popup = new MapLibrePopup({ offset: 12 }).setText(b.profile?.full_name ?? "Q∴H∴");
+
+      const marker = new maplibregl.Marker({ element: el })
+        .setLngLat([b.lng, b.lat])
+        .setPopup(popup)
+        .addTo(map);
+
+      brotherMarkersByIdRef.current[b.user_id] = marker;
+    }
+
+    // Remover markers que ya no están (o quedaron stealth / fuera del query)
+    for (const [id, marker] of Object.entries(brotherMarkersByIdRef.current)) {
+      if (!nextIds.has(id)) {
+        marker.remove();
+        delete brotherMarkersByIdRef.current[id];
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [brothers, myLat, myLng]);
+
+  // Cleanup de markers al salir de la pantalla
+  useEffect(() => {
+    return () => {
+      for (const marker of Object.values(brotherMarkersByIdRef.current)) marker.remove();
+      brotherMarkersByIdRef.current = {};
+      myMarkerRef.current?.remove();
+      myMarkerRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // -----------------------------
+  // Location update (con centrar)
+  // -----------------------------
+  const updateMyLocation = async ({ center }: { center: boolean }) => {
     if (!user || !navigator.geolocation) {
       toast.error("Geolocalización no disponible");
       return;
@@ -303,11 +380,7 @@ useEffect(() => {
         setMyLat(latitude);
         setMyLng(longitude);
 
-        // Centrar mapa al obtener coords
-        if (mapRef.current) {
-          const currentZoom = mapRef.current.getZoom();
-          mapRef.current.setView([latitude, longitude], Math.max(currentZoom, 13), { animate: true });
-        }
+        if (center) centerOn(latitude, longitude);
 
         const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy)));
 
@@ -327,10 +400,7 @@ useEffect(() => {
 
           if (error) throw error;
 
-          await supabase
-            .from("profiles")
-            .update({ last_seen_at: new Date().toISOString() })
-            .eq("id", user.id);
+          await supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", user.id);
 
           checkProximityAlerts(brothers);
         } catch (e) {
@@ -345,9 +415,56 @@ useEffect(() => {
         toast.error("No se pudo obtener tu ubicación");
         setIsUpdatingLocation(false);
       },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
     );
   };
+
+  // Si sales de stealth, actualiza ubicación 1 vez (y centra)
+  useEffect(() => {
+    const prev = prevStealthRef.current;
+    prevStealthRef.current = stealthMode;
+
+    if (prev === true && stealthMode === false) {
+      setTimeout(() => updateMyLocation({ center: true }), 800);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stealthMode]);
+
+  // Auto update cada 30s si tracking ON y no stealth
+  useEffect(() => {
+    if (!user) return;
+    if (stealthMode) return;
+    // @ts-ignore
+    if (profile?.tracking_enabled === false) return;
+
+    const interval = setInterval(() => {
+      if (!isUpdatingLocation) updateMyLocation({ center: false });
+    }, 30000);
+
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, stealthMode, profile?.tracking_enabled, isUpdatingLocation]);
+
+  // Al entrar a mapa: intenta ubicación inicial (y centra)
+  useEffect(() => {
+    if (!user) return;
+    if (stealthMode) return;
+    // @ts-ignore
+    if (profile?.tracking_enabled === false) return;
+
+    const t = setTimeout(() => updateMyLocation({ center: true }), 800);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stealthMode]);
+
+  // Si cambia initialCenter y el mapa está listo, mueve la cámara suave (solo cuando obtienes ubicación)
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    if (myLat == null || myLng == null) return;
+
+    map.jumpTo({ center: [myLng, myLat], zoom: Math.max(map.getZoom(), 13) });
+  }, [myLat, myLng]);
 
   const toggleStealthMode = async () => {
     if (!user) return;
@@ -362,7 +479,7 @@ useEffect(() => {
       await refreshProfile();
       toast.success(newValue ? "Modo fantasma activado" : "Modo fantasma desactivado");
 
-      if (newValue === false) setTimeout(() => updateMyLocation(), 800);
+      if (newValue === false) setTimeout(() => updateMyLocation({ center: true }), 800);
     } catch (e) {
       console.error("Error toggling stealth mode:", e);
       setStealthMode(!newValue);
@@ -375,63 +492,17 @@ useEffect(() => {
     return haversineDistance(myLat, myLng, lat, lng).toFixed(2);
   };
 
-  // Zoom buttons
-  const zoomIn = () => mapRef.current?.setZoom(mapRef.current.getZoom() + 1);
-  const zoomOut = () => mapRef.current?.setZoom(mapRef.current.getZoom() - 1);
-
-  // Centro inicial (si aún no hay coords => Venezuela)
-  const initialCenter: [number, number] = useMemo(() => {
-    if (myLat != null && myLng != null) return [myLat, myLng];
-    return [8.6, -66.9];
-  }, [myLat, myLng]);
+  // Zoom buttons (instantáneo, sin anim para máxima fluidez)
+  const zoomIn = () => mapRef.current?.zoomIn({ duration: 0 });
+  const zoomOut = () => mapRef.current?.zoomOut({ duration: 0 });
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
-      {/* Contenedor de pantalla completa */}
       <div className="bg-map-bg relative overflow-hidden" style={{ height: "100dvh" }}>
-        {/* MAPA (fondo) */}
+        {/* MAP */}
         <div className="absolute inset-0 z-0">
-          <MapContainer
-            center={initialCenter}
-            zoom={6}
-            scrollWheelZoom={true}
-            zoomControl={false}
-            attributionControl={true}
-            style={{ height: "100%", width: "100%" }}
-            whenCreated={(map) => {
-              mapRef.current = map;
-            }}
-          >
-            <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+          <div ref={mapDivRef} style={{ height: "100%", width: "100%", background: "#0b1220" }} />
 
-            {/* Tu marcador */}
-            {myLat != null && myLng != null && (
-              <Marker position={[myLat, myLng]} icon={myIcon}>
-                <Popup>Tu ubicación</Popup>
-              </Marker>
-            )}
-
-            {/* Marcadores QH (no stealth) */}
-            {brothers.map((b) => {
-              if (!b.lat || !b.lng) return null;
-              if (b.profile?.stealth_mode) return null;
-
-              return (
-                <Marker
-                  key={b.id}
-                  position={[b.lat, b.lng]}
-                  icon={brotherIcon}
-                  eventHandlers={{
-                    click: () => setSelectedBrother(b.user_id),
-                  }}
-                >
-                  <Popup>{b.profile?.full_name ?? "Q∴H∴"}</Popup>
-                </Marker>
-              );
-            })}
-          </MapContainer>
-
-          {/* Loading encima del mapa */}
           {isLoading && (
             <div className="absolute inset-0 flex items-center justify-center z-10">
               <Loader2 className="w-8 h-8 text-gold animate-spin" />
@@ -475,7 +546,7 @@ useEffect(() => {
           </Button>
         </div>
 
-        {/* BOTTOM CONTROLS (AUTO: pegados al BottomNav real) */}
+        {/* BOTTOM CONTROLS */}
         <div className="absolute left-4 right-4 flex justify-between items-end z-20" style={{ bottom: bottomOffset }}>
           <div className="glass-dark rounded-lg px-4 py-3 pointer-events-auto">
             <div className="flex items-center gap-2">
@@ -487,17 +558,19 @@ useEffect(() => {
             </div>
           </div>
 
+          {/* ✅ Botón del medio: centra + zoom máximo + actualiza */}
           <Button
             variant="masonic"
             size="icon-lg"
             className="rounded-full shadow-gold pointer-events-auto"
-            onClick={updateMyLocation}
+            onClick={() => updateMyLocation({ center: true })}
             disabled={isUpdatingLocation}
+            title="Centrarme y actualizar"
           >
             {isUpdatingLocation ? <Loader2 size={24} className="animate-spin" /> : <Locate size={24} />}
           </Button>
 
-          <Button variant="masonic-dark" size="icon" className="pointer-events-auto">
+          <Button variant="masonic-dark" size="icon" className="pointer-events-auto" title="Opciones">
             <Settings size={20} />
           </Button>
         </div>
