@@ -17,6 +17,8 @@ import Chat from "./pages/Chat";
 import Profile from "./pages/Profile";
 import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
+import EmailVerified from "./pages/EmailVerified";
+
 
 const queryClient = new QueryClient();
 
@@ -36,6 +38,8 @@ const App = () => (
             <Route path="/register" element={<Register />} />
             <Route path="/login" element={<Login />} />
             <Route path="/verification" element={<Verification />} />
+            <Route path="/email-verified" element={<EmailVerified />} />
+
             
             {/* Main App - Protected */}
             <Route

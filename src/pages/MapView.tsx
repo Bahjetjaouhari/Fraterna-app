@@ -74,6 +74,11 @@ export const MapView: React.FC = () => {
   // Anti-spam de alertas
   const lastNotifiedRef = useRef<Record<string, number>>({});
 
+  // ✅ Optimización: anti-spam para fetchBrothers() vía realtime
+  const fetchDebounceTimerRef = useRef<number | null>(null);
+  const isFetchingRef = useRef(false);
+  const pendingFetchRef = useRef(false);
+
   // -----------------------------
   // Bottom nav measure
   // -----------------------------
@@ -170,17 +175,14 @@ export const MapView: React.FC = () => {
 
     const map = new maplibregl.Map({
       container: mapDivRef.current,
-      // CARTO Voyager vector style (gratis)
       style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
       center: initialCenter,
       zoom: 6,
       minZoom: 3,
       maxZoom: 18,
-      // 🔥 claves anti-lag/parpadeo
       fadeDuration: 0,
       renderWorldCopies: false,
       attributionControl: true,
-      // UX
       dragRotate: false,
       pitchWithRotate: false,
       touchPitch: false,
@@ -188,13 +190,11 @@ export const MapView: React.FC = () => {
 
     mapRef.current = map;
 
-    // Resize seguro
     const resize = () => map.resize();
     window.addEventListener("resize", resize);
     window.addEventListener("orientationchange", resize);
 
     map.on("load", () => {
-      // Fuerza un resize inicial por si el layout cambia
       requestAnimationFrame(() => map.resize());
     });
 
@@ -215,7 +215,7 @@ export const MapView: React.FC = () => {
   }, [bottomNavH]);
 
   // -----------------------------
-  // Center helper (zoom máximo)
+  // Center helper
   // -----------------------------
   const centerOn = (lat: number, lng: number) => {
     const map = mapRef.current;
@@ -235,22 +235,41 @@ export const MapView: React.FC = () => {
   // Fetch brothers + realtime
   // -----------------------------
   useEffect(() => {
+    // Primer fetch
     fetchBrothers();
 
     const channel = supabase
       .channel("locations-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, () => {
-        fetchBrothers();
+        // ✅ Optimización: agrupa eventos seguidos (anti-spam de consultas)
+        scheduleFetchBrothers();
       })
       .subscribe();
 
     return () => {
+      if (fetchDebounceTimerRef.current) window.clearTimeout(fetchDebounceTimerRef.current);
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ✅ Debounce: si entran muchos eventos, hacemos 1 sola consulta
+  const scheduleFetchBrothers = () => {
+    if (fetchDebounceTimerRef.current) window.clearTimeout(fetchDebounceTimerRef.current);
+    fetchDebounceTimerRef.current = window.setTimeout(() => {
+      fetchBrothers();
+    }, 600);
+  };
+
   const fetchBrothers = async () => {
+    // ✅ Evita solapar fetches (si llega otro evento mientras tanto, corre 1 vez al final)
+    if (isFetchingRef.current) {
+      pendingFetchRef.current = true;
+      return;
+    }
+
+    isFetchingRef.current = true;
+
     try {
       const { data, error } = await supabase
         .from("locations")
@@ -275,7 +294,14 @@ export const MapView: React.FC = () => {
     } catch (e) {
       console.error("Error in fetchBrothers:", e);
     } finally {
+      isFetchingRef.current = false;
       setIsLoading(false);
+
+      if (pendingFetchRef.current) {
+        pendingFetchRef.current = false;
+        // Re-ejecuta 1 vez por si llegaron cambios mientras estábamos consultando
+        scheduleFetchBrothers();
+      }
     }
   };
 
@@ -314,7 +340,8 @@ export const MapView: React.FC = () => {
     const nextIds = new Set<string>();
 
     for (const b of brothers) {
-      if (!b.lat || !b.lng) continue;
+      // ✅ Importante: no usar "!b.lat" porque 0 sería falso
+      if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue;
 
       nextIds.add(b.user_id);
@@ -322,12 +349,10 @@ export const MapView: React.FC = () => {
       const existing = brotherMarkersByIdRef.current[b.user_id];
 
       if (existing) {
-        // Solo actualiza posición (no recrea)
         existing.setLngLat([b.lng, b.lat]);
         continue;
       }
 
-      // Crear nuevo marker si no existe
       const el = makeDotEl("bro");
       el.addEventListener("click", () => setSelectedBrother(b.user_id));
 
@@ -341,7 +366,7 @@ export const MapView: React.FC = () => {
       brotherMarkersByIdRef.current[b.user_id] = marker;
     }
 
-    // Remover markers que ya no están (o quedaron stealth / fuera del query)
+    // Remover markers que ya no están
     for (const [id, marker] of Object.entries(brotherMarkersByIdRef.current)) {
       if (!nextIds.has(id)) {
         marker.remove();
@@ -457,7 +482,7 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stealthMode]);
 
-  // Si cambia initialCenter y el mapa está listo, mueve la cámara suave (solo cuando obtienes ubicación)
+  // Si cambia initialCenter y el mapa está listo, mueve la cámara suave
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -492,7 +517,6 @@ export const MapView: React.FC = () => {
     return haversineDistance(myLat, myLng, lat, lng).toFixed(2);
   };
 
-  // Zoom buttons (instantáneo, sin anim para máxima fluidez)
   const zoomIn = () => mapRef.current?.zoomIn({ duration: 0 });
   const zoomOut = () => mapRef.current?.zoomOut({ duration: 0 });
 
@@ -558,7 +582,6 @@ export const MapView: React.FC = () => {
             </div>
           </div>
 
-          {/* ✅ Botón del medio: centra + zoom máximo + actualiza */}
           <Button
             variant="masonic"
             size="icon-lg"

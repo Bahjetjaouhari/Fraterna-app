@@ -142,7 +142,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       const { error } = await supabase.auth.signUp({
         email,
         password,
-        options: { data: metadata },
+        options: { 
+        data: metadata,
+        emailRedirectTo: "https://fraterna-app.pages.dev/email-verified",
+          },
       });
       return { error: error as Error | null };
     } catch (error) {
