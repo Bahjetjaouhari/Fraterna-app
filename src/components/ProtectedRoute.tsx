@@ -37,10 +37,18 @@ export const ProtectedRoute = ({
 
   // Need verification but user is not verified
   if (requireVerification && !isVerified) {
-    // Check if user is blocked
-    if (profile?.verification_status === 'blocked' || profile?.verification_status === 'manual_review') {
+    // ✅ Allow email verified landing page
+    if (location.pathname === '/email-verified') {
+      return <>{children}</>;
+    }
+
+    if (
+      profile?.verification_status === 'blocked' ||
+      profile?.verification_status === 'manual_review'
+    ) {
       return <Navigate to="/verification" replace />;
     }
+
     return <Navigate to="/verification" replace />;
   }
 

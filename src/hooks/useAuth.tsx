@@ -145,6 +145,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         options: { 
         data: metadata,
         emailRedirectTo: "https://fraterna-app.pages.dev/email-verified",
+
           },
       });
       return { error: error as Error | null };
