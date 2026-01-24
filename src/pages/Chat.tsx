@@ -1,4 +1,4 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Send, Mic, Clock, AlertCircle, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -17,15 +17,79 @@ interface ChatMessage {
   deleted_by_admin: boolean;
 }
 
+type ProfileMini = {
+  id: string;
+  full_name: string | null;
+  avatar_url: string | null;
+};
+
+function initialsFromName(name: string) {
+  const parts = name
+    .trim()
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2);
+  const initials = parts.map((p) => p[0]?.toUpperCase()).join("");
+  return initials || "?";
+}
+
+function AvatarMini({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
+  const initials = useMemo(() => initialsFromName(name), [name]);
+  const [imgFailed, setImgFailed] = useState(false);
+
+  const showImage = !!avatarUrl && !imgFailed;
+
+  return (
+    <div className="w-8 h-8 rounded-full overflow-hidden border border-border bg-muted flex items-center justify-center shrink-0">
+      {showImage ? (
+        <img
+          src={avatarUrl as string}
+          alt={name}
+          className="w-full h-full object-cover"
+          referrerPolicy="no-referrer"
+          onError={() => setImgFailed(true)}
+        />
+      ) : (
+        // ✅ Fallback: logo (mismo del perfil / header)
+        <div className="w-full h-full flex items-center justify-center bg-navy">
+          <MasonicSymbol size={18} className="text-gold" />
+          {/* Si por alguna razón quieres iniciales debajo del logo, me dices y lo hacemos */}
+          {/* <span className="sr-only">{initials}</span> */}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export default function Chat() {
-  const { user, isAdmin } = useAuth();
+  const { user, isAdmin, profile } = useAuth();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
+
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  const fetchProfilesForMessages = async (list: ChatMessage[]) => {
+    const ids = Array.from(new Set(list.map((m) => m.user_id))).filter(Boolean);
+    const missing = ids.filter((id) => !profilesById[id]);
+    if (missing.length === 0) return;
+
+    const { data, error } = await supabase
+      .from("profiles")
+      .select("id,full_name,avatar_url")
+      .in("id", missing);
+
+    if (error || !data) return;
+
+    const next: Record<string, ProfileMini> = {};
+    for (const p of data as ProfileMini[]) next[p.id] = p;
+
+    setProfilesById((prev) => ({ ...prev, ...next }));
+  };
 
   const fetchMessages = async () => {
     const { data, error } = await supabase
@@ -36,7 +100,12 @@ export default function Chat() {
       .order("created_at", { ascending: true })
       .limit(200);
 
-    if (!error && data) setMessages(data as ChatMessage[]);
+    if (!error && data) {
+      const list = data as ChatMessage[];
+      setMessages(list);
+      fetchProfilesForMessages(list);
+    }
+
     setIsLoading(false);
   };
 
@@ -45,13 +114,9 @@ export default function Chat() {
 
     const channel = supabase
       .channel("chat-global")
-      .on(
-        "postgres_changes",
-        { event: "*", schema: "public", table: "chat_messages" },
-        () => {
-          fetchMessages();
-        }
-      )
+      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => {
+        fetchMessages();
+      })
       .subscribe();
 
     return () => {
@@ -88,10 +153,7 @@ export default function Chat() {
   };
 
   const formatTime = (dateStr: string) =>
-    new Date(dateStr).toLocaleTimeString("es-ES", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+    new Date(dateStr).toLocaleTimeString("es-ES", { hour: "2-digit", minute: "2-digit" });
 
   const getTimeRemaining = (expiresAt: string) => {
     const diff = new Date(expiresAt).getTime() - Date.now();
@@ -99,19 +161,33 @@ export default function Chat() {
     return `${hours}h`;
   };
 
+  const formatQHName = (fullName?: string | null) => {
+    const name = (fullName ?? "").trim();
+    return name ? `Q∴H∴ ${name}` : "Q∴H∴";
+  };
+
+  const getDisplayName = (userId: string, isMe: boolean) => {
+    if (isMe) return formatQHName((profile as any)?.full_name ?? "Tú");
+    const p = profilesById[userId];
+    return formatQHName(p?.full_name ?? null);
+  };
+
+  const getAvatarUrl = (userId: string) => {
+    const p = profilesById[userId];
+    return p?.avatar_url ?? null;
+  };
+
   return (
     <AppLayout showNav={true} isAdmin={isAdmin}>
       <div className="h-screen flex flex-col bg-background">
-        {/* Header (como antes) */}
+        {/* Header */}
         <div className="bg-navy px-4 pt-12 pb-4 safe-area-top">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <MasonicSymbol size={32} className="text-gold" />
               <div>
                 <h1 className="font-display text-lg text-ivory">Chat Global</h1>
-                <p className="text-ivory/60 text-xs">
-                  {messages.length} mensajes activos
-                </p>
+                <p className="text-ivory/60 text-xs">{messages.length} mensajes activos</p>
               </div>
             </div>
 
@@ -147,27 +223,35 @@ export default function Chat() {
             messages.map((message) => {
               const isMe = message.user_id === user?.id;
 
-              return (
-                <div
-                  key={message.id}
-                  className={`flex ${isMe ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-[80%] ${
-                      isMe
-                        ? "bg-primary text-primary-foreground rounded-2xl rounded-br-md"
-                        : "bg-card border border-border rounded-2xl rounded-bl-md"
-                    } px-4 py-3`}
-                  >
-                    <p className="text-sm">{message.content ?? ""}</p>
+              const name = getDisplayName(message.user_id, isMe);
+              const avatarUrlForOther = getAvatarUrl(message.user_id);
 
-                    <div className="flex items-center justify-end gap-2 mt-1">
-                      <span className="text-[10px] opacity-50">
-                        {formatTime(message.created_at)}
-                      </span>
-                      <span className="text-[10px] opacity-30">
-                        · {getTimeRemaining(message.expires_at)}
-                      </span>
+              return (
+                <div key={message.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  {!isMe && (
+                    <div className="mr-2 mt-1">
+                      <AvatarMini name={name} avatarUrl={avatarUrlForOther} />
+                    </div>
+                  )}
+
+                  <div className="max-w-[80%]">
+                    <div className={`text-[11px] text-muted-foreground mb-1 ${isMe ? "text-right" : ""}`}>
+                      {name}
+                    </div>
+
+                    <div
+                      className={`${
+                        isMe
+                          ? "bg-primary text-primary-foreground rounded-2xl rounded-br-md"
+                          : "bg-card border border-border rounded-2xl rounded-bl-md"
+                      } px-4 py-3`}
+                    >
+                      <p className="text-sm">{message.content ?? ""}</p>
+
+                      <div className="flex items-center justify-end gap-2 mt-1">
+                        <span className="text-[10px] opacity-50">{formatTime(message.created_at)}</span>
+                        <span className="text-[10px] opacity-30">· {getTimeRemaining(message.expires_at)}</span>
+                      </div>
                     </div>
                   </div>
                 </div>
@@ -178,7 +262,7 @@ export default function Chat() {
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Input Area (como antes) */}
+        {/* Input Area */}
         <div className="border-t border-border bg-card px-4 py-3 safe-area-bottom">
           <div className="flex items-center gap-2">
             <Input
@@ -190,11 +274,10 @@ export default function Chat() {
               disabled={isSending}
             />
 
-            {/* Voice (lo dejamos para mañana, pero queda el botón) */}
             <Button
               variant="masonic-dark"
               size="icon"
-              onClick={() => toast.info("Mensajes de voz: lo activamos mañana")}
+              onClick={() => toast.info("Mensajes de voz: lo activamos luego")}
             >
               <Mic size={20} />
             </Button>
@@ -205,11 +288,7 @@ export default function Chat() {
               onClick={handleSendMessage}
               disabled={!newMessage.trim() || isSending}
             >
-              {isSending ? (
-                <Loader2 size={20} className="animate-spin" />
-              ) : (
-                <Send size={20} />
-              )}
+              {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
             </Button>
           </div>
         </div>
