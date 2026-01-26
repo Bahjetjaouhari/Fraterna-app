@@ -122,6 +122,11 @@ export const MapView: React.FC = () => {
     if (profile) setStealthMode(profile.stealth_mode);
   }, [profile]);
 
+  // ✅ Contador visible (no incluye stealth; tú ya estás excluido por query)
+  const visibleBrothersCount = useMemo(() => {
+    return brothers.filter((b) => !b.profile?.stealth_mode).length;
+  }, [brothers]);
+
   // -----------------------------
   // Proximity alerts
   // -----------------------------
@@ -161,7 +166,6 @@ export const MapView: React.FC = () => {
   // Centro inicial (si aún no hay coords => Venezuela)
   // -----------------------------
   const initialCenter = useMemo<[number, number]>(() => {
-    // MapLibre usa [lng, lat]
     if (myLat != null && myLng != null) return [myLng, myLat];
     return [-66.9, 8.6];
   }, [myLat, myLng]);
@@ -235,13 +239,11 @@ export const MapView: React.FC = () => {
   // Fetch brothers + realtime
   // -----------------------------
   useEffect(() => {
-    // Primer fetch
     fetchBrothers();
 
     const channel = supabase
       .channel("locations-changes")
       .on("postgres_changes", { event: "*", schema: "public", table: "locations" }, () => {
-        // ✅ Optimización: agrupa eventos seguidos (anti-spam de consultas)
         scheduleFetchBrothers();
       })
       .subscribe();
@@ -253,7 +255,6 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // ✅ Debounce: si entran muchos eventos, hacemos 1 sola consulta
   const scheduleFetchBrothers = () => {
     if (fetchDebounceTimerRef.current) window.clearTimeout(fetchDebounceTimerRef.current);
     fetchDebounceTimerRef.current = window.setTimeout(() => {
@@ -262,7 +263,6 @@ export const MapView: React.FC = () => {
   };
 
   const fetchBrothers = async () => {
-    // ✅ Evita solapar fetches (si llega otro evento mientras tanto, corre 1 vez al final)
     if (isFetchingRef.current) {
       pendingFetchRef.current = true;
       return;
@@ -299,7 +299,6 @@ export const MapView: React.FC = () => {
 
       if (pendingFetchRef.current) {
         pendingFetchRef.current = false;
-        // Re-ejecuta 1 vez por si llegaron cambios mientras estábamos consultando
         scheduleFetchBrothers();
       }
     }
@@ -325,7 +324,6 @@ export const MapView: React.FC = () => {
     const map = mapRef.current;
     if (!map) return;
 
-    // Yo
     if (myLat != null && myLng != null) {
       if (!myMarkerRef.current) {
         myMarkerRef.current = new maplibregl.Marker({ element: makeDotEl("me") })
@@ -336,11 +334,9 @@ export const MapView: React.FC = () => {
       }
     }
 
-    // Hermanos (diff update: crear/actualizar/remover sin recrear todo)
     const nextIds = new Set<string>();
 
     for (const b of brothers) {
-      // ✅ Importante: no usar "!b.lat" porque 0 sería falso
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue;
 
@@ -366,7 +362,6 @@ export const MapView: React.FC = () => {
       brotherMarkersByIdRef.current[b.user_id] = marker;
     }
 
-    // Remover markers que ya no están
     for (const [id, marker] of Object.entries(brotherMarkersByIdRef.current)) {
       if (!nextIds.has(id)) {
         marker.remove();
@@ -376,7 +371,6 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [brothers, myLat, myLng]);
 
-  // Cleanup de markers al salir de la pantalla
   useEffect(() => {
     return () => {
       for (const marker of Object.values(brotherMarkersByIdRef.current)) marker.remove();
@@ -444,7 +438,6 @@ export const MapView: React.FC = () => {
     );
   };
 
-  // Si sales de stealth, actualiza ubicación 1 vez (y centra)
   useEffect(() => {
     const prev = prevStealthRef.current;
     prevStealthRef.current = stealthMode;
@@ -455,7 +448,6 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stealthMode]);
 
-  // Auto update cada 30s si tracking ON y no stealth
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
@@ -470,7 +462,6 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, stealthMode, profile?.tracking_enabled, isUpdatingLocation]);
 
-  // Al entrar a mapa: intenta ubicación inicial (y centra)
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
@@ -482,7 +473,6 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stealthMode]);
 
-  // Si cambia initialCenter y el mapa está listo, mueve la cámara suave
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
@@ -522,7 +512,8 @@ export const MapView: React.FC = () => {
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
-      <div className="bg-map-bg relative overflow-hidden" style={{ height: "100dvh" }}>
+      {/* ✅ CAMBIO ÚNICO: de "relative" a pantalla fija para bloquear el scroll del documento */}
+      <div className="bg-map-bg fixed inset-0 overflow-hidden" style={{ height: "100dvh" }}>
         {/* MAP */}
         <div className="absolute inset-0 z-0">
           <div ref={mapDivRef} style={{ height: "100%", width: "100%", background: "#0b1220" }} />
@@ -576,7 +567,7 @@ export const MapView: React.FC = () => {
             <div className="flex items-center gap-2">
               <Users size={18} className="text-gold" />
               <div>
-                <p className="text-ivory font-semibold">{brothers.length}</p>
+                <p className="text-ivory font-semibold">{visibleBrothersCount}</p>
                 <p className="text-ivory/60 text-xs">Q∴H∴ cerca</p>
               </div>
             </div>

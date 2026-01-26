@@ -17,9 +17,6 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
   const bottomNavRef = useRef<HTMLDivElement | null>(null);
 
   // ✅ Optimización segura:
-  // Medimos la altura REAL del bottom nav y la guardamos en una CSS var.
-  // Así todas las pantallas usan el padding exacto (sin hardcode 5rem),
-  // evitando reflows y “saltos” en iOS/Android/desktop.
   useEffect(() => {
     if (!showNav) return;
     const el = bottomNavRef.current;
@@ -54,6 +51,7 @@ export const AppLayout: React.FC<AppLayoutProps> = ({
     };
   }, [showNav]);
 
+  // Asegúrate de que el padding de la parte inferior se ajuste correctamente
   const mainPaddingBottom = showNav
     ? "calc(var(--bottom-nav-h, 5rem) + env(safe-area-inset-bottom, 0px))"
     : undefined;

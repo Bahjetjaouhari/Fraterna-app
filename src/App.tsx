@@ -19,6 +19,8 @@ import AdminPanel from "./pages/AdminPanel";
 import NotFound from "./pages/NotFound";
 import EmailVerified from "./pages/EmailVerified";
 
+// ✅ NUEVO: Emergency Chat
+import EmergencyChat from "./pages/EmergencyChat";
 
 const queryClient = new QueryClient();
 
@@ -32,7 +34,7 @@ const App = () => (
           <Routes>
             {/* Splash / Entry */}
             <Route path="/" element={<Index />} />
-            
+
             {/* Onboarding & Auth */}
             <Route path="/onboarding" element={<Onboarding />} />
             <Route path="/register" element={<Register />} />
@@ -40,7 +42,6 @@ const App = () => (
             <Route path="/verification" element={<Verification />} />
             <Route path="/email-verified" element={<EmailVerified />} />
 
-            
             {/* Main App - Protected */}
             <Route
               path="/map"
@@ -66,7 +67,17 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-            
+
+            {/* ✅ NUEVO: Emergency Chat Route */}
+            <Route
+              path="/emergency/chat"
+              element={
+                <ProtectedRoute requireVerification>
+                  <EmergencyChat />
+                </ProtectedRoute>
+              }
+            />
+
             {/* Admin - Protected */}
             <Route
               path="/admin"
@@ -76,7 +87,7 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
-            
+
             {/* Catch-all */}
             <Route path="*" element={<NotFound />} />
           </Routes>

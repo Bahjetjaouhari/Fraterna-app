@@ -11,8 +11,7 @@ interface NavItem {
   path: string;
   adminOnly?: boolean;
   emergencyOnly?: boolean;
-  onClick?: () => void; // si existe, no navega (Fase 1 segura)
-  badge?: number; // opcional: contador
+  badge?: number;
 }
 
 interface BottomNavProps {
@@ -27,7 +26,7 @@ type EmergencyRow = {
 export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
   const location = useLocation();
 
-  // ====== Emergencia (Fase 1: solo mostrar/ocultar) ======
+  // ====== Emergencia ======
   const [emergencyAvailable, setEmergencyAvailable] = useState(false);
   const [emergencyCount, setEmergencyCount] = useState(0);
 
@@ -49,14 +48,15 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
       });
 
       if (error) {
-        // Si falla por cualquier cosa, ocultamos para no romper UI
         console.error("emergency_status rpc error:", error);
         setEmergencyAvailable(false);
         setEmergencyCount(0);
         return;
       }
 
-      const row = (Array.isArray(data) ? (data[0] as EmergencyRow | undefined) : undefined) ?? undefined;
+      const row =
+        (Array.isArray(data) ? (data[0] as EmergencyRow | undefined) : undefined) ??
+        undefined;
 
       const available = row?.available === true;
       const count = typeof row?.others_count === "number" ? row.others_count : 0;
@@ -68,23 +68,33 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     }
   };
 
-  // Polling ligero: al montar + cada 20s
+  // Polling + refresco al volver a la pestaña/app
   useEffect(() => {
     checkEmergencyAvailability();
+
+    const onFocus = () => checkEmergencyAvailability();
+    const onVis = () => {
+      if (document.visibilityState === "visible") checkEmergencyAvailability();
+    };
+
+    window.addEventListener("focus", onFocus);
+    document.addEventListener("visibilitychange", onVis);
 
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = window.setInterval(() => {
       checkEmergencyAvailability();
-    }, 20000);
+    }, 10000); // antes 20000
 
     return () => {
+      window.removeEventListener("focus", onFocus);
+      document.removeEventListener("visibilitychange", onVis);
       if (timerRef.current) window.clearInterval(timerRef.current);
       timerRef.current = null;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Opcional: refrescar al cambiar de ruta
+  // refresca al cambiar de ruta
   useEffect(() => {
     checkEmergencyAvailability();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -94,14 +104,13 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     () => [
       { icon: Map, label: "Mapa", path: "/map" },
       { icon: MessageCircle, label: "Chat", path: "/chat" },
-      // 🚨 Solo aparece si Supabase dice que hay 2+ (tú + al menos 1)
+      // 🚨 CAMBIO: ahora navega a /emergency/chat
       {
         icon: AlertTriangle,
         label: "Emergencia",
-        path: "#",
+        path: "/emergency/chat",  // Aquí cambiamos el path
         emergencyOnly: true,
-        onClick: () => toast.message("Chat de emergencia: Próximamente"),
-        badge: emergencyCount, // número de QH adicionales
+        badge: emergencyCount,
       },
       { icon: User, label: "Perfil", path: "/profile" },
       { icon: Shield, label: "Admin", path: "/admin", adminOnly: true },
@@ -116,45 +125,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
   });
 
   return (
-    <nav className="nav-masonic safe-area-bottom">
+    <nav className="nav-masonic safe-area-bottom" id="bottom-nav">
       <div className="flex items-center justify-around py-2">
         {visibleItems.map((item) => {
           const isActive = location.pathname === item.path;
           const Icon = item.icon;
-
-          const content = (
-            <>
-              <div className="relative">
-                <Icon size={24} />
-                {typeof item.badge === "number" && item.badge > 0 && item.emergencyOnly && (
-                  <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-navy text-[11px] font-bold flex items-center justify-center">
-                    {item.badge}
-                  </span>
-                )}
-                {isActive && item.path !== "#" && (
-                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-gold rounded-full" />
-                )}
-              </div>
-              <span className="text-xs font-medium">{item.label}</span>
-            </>
-          );
-
-          // Si tiene onClick, no navegamos (Fase 1 segura)
-          if (item.onClick) {
-            return (
-              <button
-                key={item.label}
-                type="button"
-                onClick={item.onClick}
-                className={cn(
-                  "flex flex-col items-center gap-1 px-4 py-2 rounded-lg transition-all duration-200",
-                  "text-ivory/60 hover:text-ivory"
-                )}
-              >
-                {content}
-              </button>
-            );
-          }
 
           return (
             <Link
@@ -165,7 +140,23 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
                 isActive ? "text-gold" : "text-ivory/60 hover:text-ivory"
               )}
             >
-              {content}
+              <div className="relative">
+                <Icon size={24} />
+
+                {typeof item.badge === "number" &&
+                  item.badge > 0 &&
+                  item.emergencyOnly && (
+                    <span className="absolute -top-1 -right-2 min-w-[18px] h-[18px] px-1 rounded-full bg-gold text-navy text-[11px] font-bold flex items-center justify-center">
+                      {item.badge}
+                    </span>
+                  )}
+
+                {isActive && (
+                  <span className="absolute -bottom-1 left-1/2 -translate-x-1/2 w-1 h-1 bg-gold rounded-full" />
+                )}
+              </div>
+
+              <span className="text-xs font-medium">{item.label}</span>
             </Link>
           );
         })}
