@@ -43,8 +43,85 @@ interface BrotherLocation {
     full_name: string;
     city: string;
     stealth_mode: boolean;
+    tracking_enabled?: boolean;
+    location_visibility_mode?: "public" | "friends" | "friends_selected";
   };
 }
+
+
+type VisibilityMode = "public" | "friends" | "friends_selected";
+
+const normalizeVisibilityMode = (v: unknown): VisibilityMode => {
+  if (v === "public" || v === "friends" || v === "friends_selected") return v;
+  return "friends";
+};
+
+/**
+ * Carga relaciones necesarias para decidir si el usuario actual puede ver
+ * la ubicación de otros (amigos / allowlist).
+ * - friends: set de user_ids que son amigos del usuario actual
+ * - allowlisted: set de user_ids que te han agregado en su allowlist (solo para friends_selected)
+ *
+ * Nota: implementado con fallbacks para no romper la app si los nombres de columnas
+ * difieren entre proyectos.
+ */
+const loadViewerRelations = async (viewerId: string) => {
+  const friends = new Set<string>();
+  const allowlisted = new Set<string>();
+
+  // ---- Friends (tabla friendships) ----
+  try {
+    const { data, error } = await supabase
+      .from("friendships")
+      .select("user_id, friend_id, status")
+      .or(`user_id.eq.${viewerId},friend_id.eq.${viewerId}`)
+      .eq("status", "accepted");
+
+    if (!error && Array.isArray(data)) {
+      for (const row of data as any[]) {
+        const u = row.user_id;
+        const f = row.friend_id;
+        if (u === viewerId && typeof f === "string") friends.add(f);
+        if (f === viewerId && typeof u === "string") friends.add(u);
+      }
+    }
+  } catch {
+    // Si no existe la tabla o columnas, simplemente no habrá friends.
+  }
+
+  // ---- Allowlist (tabla location_allowlist) ----
+  // Intento 1: owner_id / allowed_user_id
+  try {
+    const { data, error } = await supabase
+      .from("location_allowlist")
+      .select("owner_id, allowed_user_id")
+      .eq("allowed_user_id", viewerId);
+
+    if (!error && Array.isArray(data)) {
+      for (const row of data as any[]) {
+        if (typeof row.owner_id === "string") allowlisted.add(row.owner_id);
+      }
+    }
+  } catch {
+    // Intento 2: user_id / allowed_user_id
+    try {
+      const { data, error } = await supabase
+        .from("location_allowlist")
+        .select("user_id, allowed_user_id")
+        .eq("allowed_user_id", viewerId);
+
+      if (!error && Array.isArray(data)) {
+        for (const row of data as any[]) {
+          if (typeof row.user_id === "string") allowlisted.add(row.user_id);
+        }
+      }
+    } catch {
+      // Sin allowlist => set vacío
+    }
+  }
+
+  return { friends, allowlisted };
+};
 
 export const MapView: React.FC = () => {
   const { user, profile, isAdmin, refreshProfile } = useAuth();
@@ -124,7 +201,7 @@ export const MapView: React.FC = () => {
 
   // ✅ Contador visible (no incluye stealth; tú ya estás excluido por query)
   const visibleBrothersCount = useMemo(() => {
-    return brothers.filter((b) => !b.profile?.stealth_mode).length;
+    return brothers.length;
   }, [brothers]);
 
   // -----------------------------
@@ -271,6 +348,11 @@ export const MapView: React.FC = () => {
     isFetchingRef.current = true;
 
     try {
+      if (!user?.id) return;
+
+      // Relaciones para privacidad (amigos / allowlist)
+      const { friends, allowlisted } = await loadViewerRelations(user.id);
+
       const { data, error } = await supabase
         .from("locations")
         .select(
@@ -278,19 +360,38 @@ export const MapView: React.FC = () => {
            profile:profiles!locations_user_id_fkey (
              full_name,
              city,
-             stealth_mode
+             stealth_mode,
+             tracking_enabled,
+             location_visibility_mode
            )`
         )
-        .neq("user_id", user?.id || "");
+        .neq("user_id", user.id);
 
       if (error) {
         console.error("Error fetching locations:", error);
         return;
       }
 
-      const list = (data || []) as unknown as BrotherLocation[];
-      setBrothers(list);
-      checkProximityAlerts(list);
+      const rawList = (data || []) as unknown as BrotherLocation[];
+
+      // Aplicar privacidad del QH (owner) hacia el viewer (tú)
+      const filtered = rawList.filter((b) => {
+        const p = b.profile as any;
+
+        // Seguridad: si el otro no quiere trackear o está en stealth => no mostrar
+        if (p?.stealth_mode) return false;
+        if (p?.tracking_enabled === false) return false;
+
+        const mode = normalizeVisibilityMode(p?.location_visibility_mode);
+
+        if (mode === "public") return true;
+        if (mode === "friends") return friends.has(b.user_id);
+        // friends_selected
+        return allowlisted.has(b.user_id);
+      });
+
+      setBrothers(filtered);
+      checkProximityAlerts(filtered);
     } catch (e) {
       console.error("Error in fetchBrothers:", e);
     } finally {
@@ -303,6 +404,7 @@ export const MapView: React.FC = () => {
       }
     }
   };
+
 
   // -----------------------------
   // Markers (MapLibre) - ultra fluido

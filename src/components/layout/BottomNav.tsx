@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
-import { Map, MessageCircle, User, Shield, AlertTriangle } from "lucide-react";
+import { Map, MessageCircle, User, Shield, AlertTriangle, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
@@ -83,7 +83,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = window.setInterval(() => {
       checkEmergencyAvailability();
-    }, 10000); // antes 20000
+    }, 10000);
 
     return () => {
       window.removeEventListener("focus", onFocus);
@@ -104,11 +104,11 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     () => [
       { icon: Map, label: "Mapa", path: "/map" },
       { icon: MessageCircle, label: "Chat", path: "/chat" },
-      // 🚨 CAMBIO: ahora navega a /emergency/chat
+      { icon: Users, label: "Amigos", path: "/friends" },
       {
         icon: AlertTriangle,
         label: "Emergencia",
-        path: "/emergency/chat",  // Aquí cambiamos el path
+        path: "/emergency/chat",
         emergencyOnly: true,
         badge: emergencyCount,
       },

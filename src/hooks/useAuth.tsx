@@ -15,6 +15,10 @@ interface Profile {
   verification_status: 'pending' | 'verified' | 'blocked' | 'manual_review';
   tracking_enabled: boolean;
   stealth_mode: boolean;
+  location_visibility_mode?: "public" | "friends" | "friends_selected";
+  location_allowlist_user_ids?: string[] | null;
+  proximity_radius_km?: number;
+  proximity_alerts_enabled?: boolean;
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;

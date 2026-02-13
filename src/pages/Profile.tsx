@@ -25,14 +25,96 @@ export const Profile: React.FC = () => {
   const { profile, user, signOut, refreshProfile, isAdmin } = useAuth();
   const [isUpdating, setIsUpdating] = useState(false);
 
-  const [proximityRadius, setProximityRadius] = useState<number>(
+  // Friends allowlist (for 'friends_selected')
+  const [friends, setFriends] = useState<Array<{ id: string; full_name: string | null }>>([]);
+  const [allowedIds, setAllowedIds] = useState<string[]>([]);
+  const [isLoadingFriends, setIsLoadingFriends] = useState(false);
+
+const [proximityRadius, setProximityRadius] = useState<number>(
     profile?.proximity_radius_km ?? 5
   );
   const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(
     profile?.proximity_alerts_enabled ?? true
   );
 
-  const updateProfileSetting = async (key: string, value: boolean) => {
+  
+const loadFriendsAndAllowlist = useCallback(async () => {
+  if (!user) return;
+  setIsLoadingFriends(true);
+  try {
+    const { data: friendships, error: friendshipsError } = await supabase
+      .from("friendships")
+      .select("user_id, friend_id, status")
+      .eq("status", "accepted")
+      .or(`user_id.eq.${user.id},friend_id.eq.${user.id}`);
+
+    if (friendshipsError) throw friendshipsError;
+
+    const friendIds = (friendships || []).map((f: any) =>
+      f.user_id === user.id ? f.friend_id : f.user_id
+    );
+
+    if (friendIds.length === 0) {
+      setFriends([]);
+      setAllowedIds([]);
+      return;
+    }
+
+    const { data: friendProfiles, error: profilesError } = await supabase
+      .from("profiles")
+      .select("id, full_name")
+      .in("id", friendIds);
+
+    if (profilesError) throw profilesError;
+    setFriends((friendProfiles || []) as any);
+
+    const { data: allowlist, error: allowlistError } = await supabase
+      .from("location_allowlist")
+      .select("allowed_user_id")
+      .eq("user_id", user.id);
+
+    if (allowlistError) throw allowlistError;
+    setAllowedIds((allowlist || []).map((a: any) => a.allowed_user_id));
+  } catch (error) {
+    console.error("Error loading friends/allowlist:", error);
+    toast.error("No se pudo cargar tu lista de amigos");
+  } finally {
+    setIsLoadingFriends(false);
+  }
+}, [user]);
+
+useEffect(() => {
+  if (!user || !profile) return;
+  loadFriendsAndAllowlist();
+}, [user, profile, loadFriendsAndAllowlist]);
+
+const toggleAllowedFriend = async (friendId: string, makeAllowed: boolean) => {
+  if (!user) return;
+
+  try {
+    if (makeAllowed) {
+      const { error } = await supabase.from("location_allowlist").insert({
+        user_id: user.id,
+        allowed_user_id: friendId,
+      });
+      if (error) throw error;
+      setAllowedIds((prev) => (prev.includes(friendId) ? prev : [...prev, friendId]));
+    } else {
+      const { error } = await supabase
+        .from("location_allowlist")
+        .delete()
+        .eq("user_id", user.id)
+        .eq("allowed_user_id", friendId);
+      if (error) throw error;
+      setAllowedIds((prev) => prev.filter((id) => id !== friendId));
+    }
+  } catch (error) {
+    console.error("Error updating allowlist:", error);
+    toast.error("No se pudo actualizar la lista de permitidos");
+  }
+};
+
+const updateProfileSetting = async (key: string, value: boolean) => {
     if (!user) return;
 
     setIsUpdating(true);
@@ -215,6 +297,108 @@ export const Profile: React.FC = () => {
                 disabled={isUpdating}
               />
             </div>
+
+{/* Visibilidad de ubicación */}
+<div className="space-y-2 py-3 border-b border-border">
+  <label className="text-sm font-medium">
+    ¿Quién puede ver tu ubicación?
+  </label>
+
+  <select
+    value={profile?.location_visibility_mode ?? "friends"}
+    onChange={async (e) => {
+      const mode = e.target.value as
+        | "public"
+        | "friends"
+        | "friends_selected";
+
+      setIsUpdating(true);
+      try {
+        const { error } = await supabase
+          .from("profiles")
+          .update({ location_visibility_mode: mode })
+          .eq("id", user?.id);
+
+        if (error) throw error;
+
+        await refreshProfile();
+        toast.success("Configuración actualizada");
+      } catch (error) {
+        console.error("Error updating visibility mode:", error);
+        toast.error("Error al actualizar configuración");
+      } finally {
+        setIsUpdating(false);
+      }
+    }}
+    className="w-full rounded-md border px-3 py-2 text-sm bg-background"
+    disabled={isUpdating}
+  >
+    <option value="public">Público (todos los Q∴H∴)</option>
+    <option value="friends">Solo amigos</option>
+    <option value="friends_selected">Amigos seleccionados</option>
+  </select>
+
+  <p className="text-xs text-muted-foreground">
+    Controla quién puede verte en el mapa.
+  </p>
+</div>
+
+{/* Allowlist UI - only for friends_selected */}
+{profile?.location_visibility_mode === "friends_selected" && (
+  <div className="py-3 space-y-3">
+    <div className="flex items-center justify-between">
+      <p className="font-medium text-sm">Amigos permitidos</p>
+      <Button
+        variant="outline"
+        size="sm"
+        onClick={loadFriendsAndAllowlist}
+        disabled={isUpdating || isLoadingFriends}
+      >
+        {isLoadingFriends ? (
+          <Loader2 className="w-4 h-4 animate-spin" />
+        ) : (
+          "Actualizar"
+        )}
+      </Button>
+    </div>
+
+    {isLoadingFriends && (
+      <p className="text-xs text-muted-foreground">Cargando...</p>
+    )}
+
+    {!isLoadingFriends && friends.length === 0 && (
+      <p className="text-xs text-muted-foreground">
+        No tienes amigos aceptados todavía.
+      </p>
+    )}
+
+    <div className="space-y-2">
+      {friends.map((f) => {
+        const name = f.full_name?.trim() || "Sin nombre";
+        const isAllowed = allowedIds.includes(f.id);
+
+        return (
+          <div
+            key={f.id}
+            className="flex items-center justify-between rounded-lg border border-border px-3 py-2"
+          >
+            <span className="text-sm">{name}</span>
+            <input
+              type="checkbox"
+              checked={isAllowed}
+              onChange={(e) => toggleAllowedFriend(f.id, e.target.checked)}
+            />
+          </div>
+        );
+      })}
+    </div>
+
+    <p className="text-xs text-muted-foreground">
+      Solo los amigos marcados podrán verte cuando uses “Amigos seleccionados”.
+    </p>
+  </div>
+)}
+
           </motion.div>
 
           {/* Notifications */}
