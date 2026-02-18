@@ -14,6 +14,7 @@ import Login from "./pages/Login";
 import Verification from "./pages/Verification";
 import MapView from "./pages/MapView";
 import Chat from "./pages/Chat";
+import EmergencyChat from "./pages/EmergencyChat";
 import Profile from "./pages/Profile";
 import Friends from "./pages/Friends";
 import AdminPanel from "./pages/AdminPanel";
@@ -55,6 +56,15 @@ const App = () => (
                 </ProtectedRoute>
               }
             />
+             <Route
+              path="/emergency/chat"
+              element={
+                <ProtectedRoute requireVerification>
+                  <EmergencyChat />
+                </ProtectedRoute>
+              }
+            />
+
             <Route
               path="/profile"
               element={

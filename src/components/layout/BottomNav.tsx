@@ -2,8 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Map, MessageCircle, User, Shield, AlertTriangle, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
-import { toast } from "sonner";
 
 interface NavItem {
   icon: React.ElementType;
@@ -18,85 +16,60 @@ interface BottomNavProps {
   isAdmin?: boolean;
 }
 
-type EmergencyRow = {
-  available: boolean;
-  others_count: number;
-};
+const NEARBY_KEY = "fraterna_nearby_brothers_count";
 
 export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
   const location = useLocation();
 
-  // ====== Emergencia ======
+  // Regla: Emergencia solo aparece si hay >= 1 QH cerca (según MapView)
   const [emergencyAvailable, setEmergencyAvailable] = useState(false);
   const [emergencyCount, setEmergencyCount] = useState(0);
 
   const timerRef = useRef<number | null>(null);
-  const inFlightRef = useRef(false);
 
-  // MVP: mismos valores que en tu función
-  const RADIUS_KM = 5;
-  const FRESH_MINUTES = 5;
-
-  const checkEmergencyAvailability = async () => {
-    if (inFlightRef.current) return;
-    inFlightRef.current = true;
-
+  const readNearbyCount = () => {
     try {
-      const { data, error } = await supabase.rpc("emergency_status", {
-        radius_km: RADIUS_KM,
-        fresh_minutes: FRESH_MINUTES,
-      });
-
-      if (error) {
-        console.error("emergency_status rpc error:", error);
-        setEmergencyAvailable(false);
-        setEmergencyCount(0);
-        return;
-      }
-
-      const row =
-        (Array.isArray(data) ? (data[0] as EmergencyRow | undefined) : undefined) ??
-        undefined;
-
-      const available = row?.available === true;
-      const count = typeof row?.others_count === "number" ? row.others_count : 0;
-
-      setEmergencyAvailable(available);
-      setEmergencyCount(count);
-    } finally {
-      inFlightRef.current = false;
+      const raw = localStorage.getItem(NEARBY_KEY);
+      const n = Number(raw ?? "0");
+      return Number.isFinite(n) ? n : 0;
+    } catch {
+      return 0;
     }
   };
 
-  // Polling + refresco al volver a la pestaña/app
+  const syncFromLocal = () => {
+    const count = readNearbyCount();
+    setEmergencyCount(count);
+    setEmergencyAvailable(count > 0);
+  };
+
   useEffect(() => {
-    checkEmergencyAvailability();
+    // primer sync
+    syncFromLocal();
 
-    const onFocus = () => checkEmergencyAvailability();
-    const onVis = () => {
-      if (document.visibilityState === "visible") checkEmergencyAvailability();
-    };
-
-    window.addEventListener("focus", onFocus);
-    document.addEventListener("visibilitychange", onVis);
-
+    // en el mismo tab, storage event no siempre dispara, así que hacemos polling suave
     if (timerRef.current) window.clearInterval(timerRef.current);
     timerRef.current = window.setInterval(() => {
-      checkEmergencyAvailability();
-    }, 10000);
+      syncFromLocal();
+    }, 1500);
+
+    // si cambia en otra pestaña, esto ayuda
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === NEARBY_KEY) syncFromLocal();
+    };
+    window.addEventListener("storage", onStorage);
 
     return () => {
-      window.removeEventListener("focus", onFocus);
-      document.removeEventListener("visibilitychange", onVis);
       if (timerRef.current) window.clearInterval(timerRef.current);
       timerRef.current = null;
+      window.removeEventListener("storage", onStorage);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // refresca al cambiar de ruta
   useEffect(() => {
-    checkEmergencyAvailability();
+    syncFromLocal();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.pathname]);
 

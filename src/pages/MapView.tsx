@@ -48,7 +48,6 @@ interface BrotherLocation {
   };
 }
 
-
 type VisibilityMode = "public" | "friends" | "friends_selected";
 
 const normalizeVisibilityMode = (v: unknown): VisibilityMode => {
@@ -152,7 +151,6 @@ const loadViewerRelations = async (viewerId: string) => {
   return { friends, allowlisted };
 };
 
-
 export const MapView: React.FC = () => {
   const { user, profile, isAdmin, refreshProfile } = useAuth();
 
@@ -229,10 +227,39 @@ export const MapView: React.FC = () => {
     if (profile) setStealthMode(profile.stealth_mode);
   }, [profile]);
 
-  // ✅ Contador visible (no incluye stealth; tú ya estás excluido por query)
+  // ✅ Contador visible (QH visibles/cargados)
   const visibleBrothersCount = useMemo(() => {
     return brothers.length;
   }, [brothers]);
+
+  // ✅ NUEVO (mínimo): QH cerca REAL (distancia + radio + tu ubicación)
+  const nearbyBrothersCount = useMemo(() => {
+    // Si no hay perfil o no hay ubicación actual, no podemos calcular cercanía real
+    if (!profile) return 0;
+    if (myLat == null || myLng == null) return 0;
+
+    // @ts-ignore
+    const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
+    if (radiusKm === 0) return 0;
+
+    let count = 0;
+    for (const b of brothers) {
+      if (b.lat == null || b.lng == null) continue;
+      if (b.profile?.stealth_mode) continue; // doble seguro
+      const dist = haversineDistance(myLat, myLng, b.lat, b.lng);
+      if (dist <= radiusKm) count++;
+    }
+    return count;
+  }, [brothers, myLat, myLng, profile]);
+
+  // ✅ NUEVO (mínimo): guardar para BottomNav (Emergencia)
+  useEffect(() => {
+    try {
+      localStorage.setItem("fraterna_nearby_brothers_count", String(nearbyBrothersCount));
+    } catch {
+      // ignore
+    }
+  }, [nearbyBrothersCount]);
 
   // -----------------------------
   // Proximity alerts
@@ -434,7 +461,6 @@ export const MapView: React.FC = () => {
       }
     }
   };
-
 
   // -----------------------------
   // Markers (MapLibre) - ultra fluido
@@ -699,7 +725,8 @@ export const MapView: React.FC = () => {
             <div className="flex items-center gap-2">
               <Users size={18} className="text-gold" />
               <div>
-                <p className="text-ivory font-semibold">{visibleBrothersCount}</p>
+                {/* ✅ CAMBIO MÍNIMO: ahora es REAL (nearbyBrothersCount) */}
+                <p className="text-ivory font-semibold">{nearbyBrothersCount}</p>
                 <p className="text-ivory/60 text-xs">Q∴H∴ cerca</p>
               </div>
             </div>
