@@ -70,58 +70,88 @@ const loadViewerRelations = async (viewerId: string) => {
   const allowlisted = new Set<string>();
 
   // ---- Friends (tabla friendships) ----
+  // Canonical: requester_id / addressee_id
+  // Fallback:  user_id / friend_id
   try {
     const { data, error } = await supabase
       .from("friendships")
-      .select("user_id, friend_id, status")
-      .or(`user_id.eq.${viewerId},friend_id.eq.${viewerId}`)
+      .select("requester_id, addressee_id, status")
+      .or(`requester_id.eq.${viewerId},addressee_id.eq.${viewerId}`)
       .eq("status", "accepted");
 
     if (!error && Array.isArray(data)) {
       for (const row of data as any[]) {
-        const u = row.user_id;
-        const f = row.friend_id;
-        if (u === viewerId && typeof f === "string") friends.add(f);
-        if (f === viewerId && typeof u === "string") friends.add(u);
+        const r = row.requester_id;
+        const a = row.addressee_id;
+        if (r === viewerId && typeof a === "string") friends.add(a);
+        if (a === viewerId && typeof r === "string") friends.add(r);
+      }
+    } else {
+      // fallback
+      const { data: data2, error: error2 } = await supabase
+        .from("friendships")
+        .select("user_id, friend_id, status")
+        .or(`user_id.eq.${viewerId},friend_id.eq.${viewerId}`)
+        .eq("status", "accepted");
+
+      if (!error2 && Array.isArray(data2)) {
+        for (const row of data2 as any[]) {
+          const u = row.user_id;
+          const f = row.friend_id;
+          if (u === viewerId && typeof f === "string") friends.add(f);
+          if (f === viewerId && typeof u === "string") friends.add(u);
+        }
       }
     }
   } catch {
-    // Si no existe la tabla o columnas, simplemente no habrá friends.
+    // si no existe algo, queda vacío
   }
 
   // ---- Allowlist (tabla location_allowlist) ----
-  // Intento 1: owner_id / allowed_user_id
+  // Canonical: owner_id / viewer_id
+  // Fallbacks: owner_id / allowed_user_id  OR  user_id / allowed_user_id
   try {
     const { data, error } = await supabase
       .from("location_allowlist")
-      .select("owner_id, allowed_user_id")
-      .eq("allowed_user_id", viewerId);
+      .select("owner_id")
+      .eq("viewer_id", viewerId);
 
     if (!error && Array.isArray(data)) {
       for (const row of data as any[]) {
         if (typeof row.owner_id === "string") allowlisted.add(row.owner_id);
       }
-    }
-  } catch {
-    // Intento 2: user_id / allowed_user_id
-    try {
-      const { data, error } = await supabase
+    } else {
+      // fallback 1
+      const { data: data2, error: error2 } = await supabase
         .from("location_allowlist")
-        .select("user_id, allowed_user_id")
+        .select("owner_id, allowed_user_id")
         .eq("allowed_user_id", viewerId);
 
-      if (!error && Array.isArray(data)) {
-        for (const row of data as any[]) {
-          if (typeof row.user_id === "string") allowlisted.add(row.user_id);
+      if (!error2 && Array.isArray(data2)) {
+        for (const row of data2 as any[]) {
+          if (typeof row.owner_id === "string") allowlisted.add(row.owner_id);
+        }
+      } else {
+        // fallback 2
+        const { data: data3, error: error3 } = await supabase
+          .from("location_allowlist")
+          .select("user_id, allowed_user_id")
+          .eq("allowed_user_id", viewerId);
+
+        if (!error3 && Array.isArray(data3)) {
+          for (const row of data3 as any[]) {
+            if (typeof row.user_id === "string") allowlisted.add(row.user_id);
+          }
         }
       }
-    } catch {
-      // Sin allowlist => set vacío
     }
+  } catch {
+    // queda vacío
   }
 
   return { friends, allowlisted };
 };
+
 
 export const MapView: React.FC = () => {
   const { user, profile, isAdmin, refreshProfile } = useAuth();
