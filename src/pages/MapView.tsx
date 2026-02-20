@@ -252,13 +252,11 @@ export const MapView: React.FC = () => {
     return count;
   }, [brothers, myLat, myLng, profile]);
 
-  // ✅ NUEVO (mínimo): guardar para BottomNav (Emergencia)
+  // ✅ Notificar a BottomNav (Emergencia) vía CustomEvent — sin polling
   useEffect(() => {
-    try {
-      localStorage.setItem("fraterna_nearby_brothers_count", String(nearbyBrothersCount));
-    } catch {
-      // ignore
-    }
+    window.dispatchEvent(
+      new CustomEvent("fraterna:nearby-count", { detail: nearbyBrothersCount })
+    );
   }, [nearbyBrothersCount]);
 
   // -----------------------------

@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Map, MessageCircle, User, Shield, AlertTriangle, Users } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -16,8 +16,6 @@ interface BottomNavProps {
   isAdmin?: boolean;
 }
 
-const NEARBY_KEY = "fraterna_nearby_brothers_count";
-
 export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
   const location = useLocation();
 
@@ -25,53 +23,21 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
   const [emergencyAvailable, setEmergencyAvailable] = useState(false);
   const [emergencyCount, setEmergencyCount] = useState(0);
 
-  const timerRef = useRef<number | null>(null);
-
-  const readNearbyCount = () => {
-    try {
-      const raw = localStorage.getItem(NEARBY_KEY);
-      const n = Number(raw ?? "0");
-      return Number.isFinite(n) ? n : 0;
-    } catch {
-      return 0;
-    }
-  };
-
-  const syncFromLocal = () => {
-    const count = readNearbyCount();
-    setEmergencyCount(count);
-    setEmergencyAvailable(count > 0);
-  };
-
   useEffect(() => {
-    // primer sync
-    syncFromLocal();
-
-    // en el mismo tab, storage event no siempre dispara, así que hacemos polling suave
-    if (timerRef.current) window.clearInterval(timerRef.current);
-    timerRef.current = window.setInterval(() => {
-      syncFromLocal();
-    }, 1500);
-
-    // si cambia en otra pestaña, esto ayuda
-    const onStorage = (e: StorageEvent) => {
-      if (e.key === NEARBY_KEY) syncFromLocal();
+    const onNearbyCount = (e: Event) => {
+      const count = (e as CustomEvent<number>).detail ?? 0;
+      setEmergencyCount(count);
+      setEmergencyAvailable(count > 0);
     };
-    window.addEventListener("storage", onStorage);
 
+    window.addEventListener("fraterna:nearby-count", onNearbyCount);
     return () => {
-      if (timerRef.current) window.clearInterval(timerRef.current);
-      timerRef.current = null;
-      window.removeEventListener("storage", onStorage);
+      window.removeEventListener("fraterna:nearby-count", onNearbyCount);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // refresca al cambiar de ruta
-  useEffect(() => {
-    syncFromLocal();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [location.pathname]);
+  // Refresca al cambiar de ruta (MapView puede no estar montado)
+  // No-op ahora; el evento lo maneja todo.
 
   const navItems: NavItem[] = useMemo(
     () => [
