@@ -1,34 +1,28 @@
 // supabase/functions/admin-role/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+import { getCorsHeaders } from "../_shared/cors.ts";
+
 type Body = {
   action?: "grant" | "revoke";
   targetUserId?: string;
 };
 
-// CORS
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function json(status: number, payload: unknown) {
+function json(req: Request, status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
 Deno.serve(async (req) => {
   // Preflight CORS
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: getCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
-    return json(405, { error: "Method not allowed" });
+    return json(req, 405, { error: "Method not allowed" });
   }
 
   try {
@@ -40,7 +34,7 @@ Deno.serve(async (req) => {
 
     if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !ANON_KEY) {
       console.error("Missing env vars!");
-      return json(500, {
+      return json(req, 500, {
         error:
           "Missing env vars. Need SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY",
       });
@@ -49,7 +43,7 @@ Deno.serve(async (req) => {
     const authHeader = req.headers.get("Authorization") ?? "";
     if (!authHeader) {
       console.error("Missing Authorization header");
-      return json(401, { error: "Missing Authorization header" });
+      return json(req, 401, { error: "Missing Authorization header" });
     }
 
     // Cliente admin (bypassa RLS) para realizar las acciones reales (grant/revoke)
@@ -67,7 +61,7 @@ Deno.serve(async (req) => {
     const { data: userData, error: userErr } = await userClient.auth.getUser();
     if (userErr || !userData?.user) {
       console.error("Auth error validating user:", userErr);
-      return json(401, {
+      return json(req, 401, {
         error: "Invalid user token",
         details: userErr?.message ?? null,
       });
@@ -87,7 +81,7 @@ Deno.serve(async (req) => {
 
     if (callerRoleErr) {
       console.error("Error checking caller role in user_roles table:", callerRoleErr);
-      return json(500, {
+      return json(req, 500, {
         error: "Failed checking caller role",
         details: callerRoleErr.message,
       });
@@ -95,7 +89,7 @@ Deno.serve(async (req) => {
 
     if (!callerRole) {
       console.warn(`User ${callerId} attempted admin-role action without admin/ceo role`);
-      return json(403, { error: "Forbidden: You must be an admin to perform this action" });
+      return json(req, 403, { error: "Forbidden: You must be an admin to perform this action" });
     }
 
     console.log(`Caller ${callerId} authorized with role ${callerRole.role}`);
@@ -122,15 +116,31 @@ Deno.serve(async (req) => {
 
     if (!action || !targetUserId) {
       console.error("Missing parameters in payload:", parsedBody);
-      return json(400, { error: "Missing parameters: 'action' and 'targetUserId' are required." });
+      return json(req, 400, { error: "Missing parameters: 'action' and 'targetUserId' are required." });
     }
 
     if (action !== "grant" && action !== "revoke") {
       console.error("Invalid action:", action);
-      return json(400, { error: "Invalid action. Use 'grant' or 'revoke'." });
+      return json(req, 400, { error: "Invalid action. Use 'grant' or 'revoke'." });
     }
 
     console.log(`Executing ${action} for target ${targetUserId}`);
+
+    // Fetch profiles for audit logging metadata
+    const { data: auditProfiles } = await adminClient
+      .from("profiles")
+      .select("id, full_name, email")
+      .in("id", [callerId, targetUserId]);
+
+    const adminProfile = auditProfiles?.find((p) => p.id === callerId);
+    const targetProfile = auditProfiles?.find((p) => p.id === targetUserId);
+
+    const auditMetadata = {
+      admin_name: adminProfile?.full_name || "Desconocido",
+      admin_email: adminProfile?.email || "Sin email",
+      target_name: targetProfile?.full_name || "Desconocido",
+      target_email: targetProfile?.email || "Sin email",
+    };
 
     // ===== GRANT ADMIN =====
     if (action === "grant") {
@@ -140,7 +150,7 @@ Deno.serve(async (req) => {
 
       if (grantErr) {
         console.error("Error granting admin role:", grantErr);
-        return json(500, { error: "Failed to grant admin", details: grantErr.message });
+        return json(req, 500, { error: "Failed to grant admin", details: grantErr.message });
       }
 
       console.log(`Role assigned to user_roles for ${targetUserId}`);
@@ -155,14 +165,22 @@ Deno.serve(async (req) => {
         console.error("Warning: Could not update profile role", profilesErr);
       }
 
-      return json(200, { ok: true, action: "grant", targetUserId });
+      // Audit Log
+      await adminClient.from("admin_audit_logs").insert({
+        admin_id: callerId,
+        target_user_id: targetUserId,
+        action: "grant",
+        metadata: auditMetadata
+      });
+
+      return json(req, 200, { ok: true, action: "grant", targetUserId });
     }
 
     // ===== REVOKE ADMIN =====
     if (action === "revoke") {
       // Prevención: evitar revocarse a sí mismo el admin? (Puntual, preferiblemente)
       if (targetUserId === callerId) {
-        return json(400, { error: "Cannot revoke your own admin access here." });
+        return json(req, 400, { error: "Cannot revoke your own admin access here." });
       }
 
       const { error: revokeErr } = await adminClient
@@ -173,7 +191,7 @@ Deno.serve(async (req) => {
 
       if (revokeErr) {
         console.error("Error revoking admin role:", revokeErr);
-        return json(500, { error: "Failed to revoke admin", details: revokeErr.message });
+        return json(req, 500, { error: "Failed to revoke admin", details: revokeErr.message });
       }
 
       const { error: profilesErr } = await adminClient
@@ -185,12 +203,20 @@ Deno.serve(async (req) => {
         console.error("Warning: Could not update profile role", profilesErr);
       }
 
-      return json(200, { ok: true, action: "revoke", targetUserId });
+      // Audit Log
+      await adminClient.from("admin_audit_logs").insert({
+        admin_id: callerId,
+        target_user_id: targetUserId,
+        action: "revoke",
+        metadata: auditMetadata
+      });
+
+      return json(req, 200, { ok: true, action: "revoke", targetUserId });
     }
 
   } catch (e) {
     console.error("Unhandled top-level error:", e);
-    return json(500, { error: "Unexpected error", details: String(e) });
+    return json(req, 500, { error: "Unexpected error", details: String(e) });
   }
 });
 

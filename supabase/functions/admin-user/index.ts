@@ -1,34 +1,28 @@
 // supabase/functions/admin-user/index.ts
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
+import { getCorsHeaders } from "../_shared/cors.ts";
+
 type Body = {
   action?: "ban" | "unban";
   targetUserId?: string;
 };
 
-// CORS
-const corsHeaders = {
-  "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Headers":
-    "authorization, x-client-info, apikey, content-type",
-  "Access-Control-Allow-Methods": "POST, OPTIONS",
-};
-
-function json(status: number, payload: unknown) {
+function json(req: Request, status: number, payload: unknown) {
   return new Response(JSON.stringify(payload), {
     status,
-    headers: { ...corsHeaders, "Content-Type": "application/json" },
+    headers: { ...getCorsHeaders(req), "Content-Type": "application/json" },
   });
 }
 
 Deno.serve(async (req) => {
   // Preflight CORS
   if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
+    return new Response("ok", { headers: getCorsHeaders(req) });
   }
 
   if (req.method !== "POST") {
-    return json(405, { error: "Method not allowed" });
+    return json(req, 405, { error: "Method not allowed" });
   }
 
   try {
@@ -37,7 +31,7 @@ Deno.serve(async (req) => {
     const ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY") ?? "";
 
     if (!SUPABASE_URL || !SERVICE_ROLE_KEY || !ANON_KEY) {
-      return json(500, {
+      return json(req, 500, {
         error:
           "Missing env vars. Need SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, SUPABASE_ANON_KEY",
       });
@@ -45,7 +39,7 @@ Deno.serve(async (req) => {
 
     const authHeader = req.headers.get("Authorization") ?? "";
     if (!authHeader) {
-      return json(401, { error: "Missing Authorization header" });
+      return json(req, 401, { error: "Missing Authorization header" });
     }
 
     // Cliente admin (bypassa RLS + Auth admin)
@@ -61,7 +55,7 @@ Deno.serve(async (req) => {
 
     const { data: userData, error: userErr } = await userClient.auth.getUser();
     if (userErr || !userData?.user) {
-      return json(401, {
+      return json(req, 401, {
         error: "Invalid user token",
         details: userErr?.message ?? null,
       });
@@ -77,14 +71,14 @@ Deno.serve(async (req) => {
       .maybeSingle();
 
     if (callerRoleErr) {
-      return json(500, {
+      return json(req, 500, {
         error: "Failed checking caller role",
         details: callerRoleErr.message,
       });
     }
 
     if (callerRole?.role !== "admin") {
-      return json(403, { error: "Forbidden: admin only" });
+      return json(req, 403, { error: "Forbidden: admin only" });
     }
 
     const body = (await req.json().catch(() => ({}))) as Body;
@@ -92,16 +86,32 @@ Deno.serve(async (req) => {
     const targetUserId = body.targetUserId;
 
     if (!action || (action !== "ban" && action !== "unban")) {
-      return json(400, { error: "Invalid action. Use 'ban' or 'unban'." });
+      return json(req, 400, { error: "Invalid action. Use 'ban' or 'unban'." });
     }
     if (!targetUserId) {
-      return json(400, { error: "Missing targetUserId" });
+      return json(req, 400, { error: "Missing targetUserId" });
     }
 
     // Evitar banearte a ti mismo (opcional pero recomendado)
     if (action === "ban" && targetUserId === callerId) {
-      return json(400, { error: "No puedes banearte a ti mismo." });
+      return json(req, 400, { error: "No puedes banearte a ti mismo." });
     }
+
+    // Fetch profiles for audit logging metadata
+    const { data: auditProfiles } = await adminClient
+      .from("profiles")
+      .select("id, full_name, email")
+      .in("id", [callerId, targetUserId]);
+
+    const adminProfile = auditProfiles?.find((p) => p.id === callerId);
+    const targetProfile = auditProfiles?.find((p) => p.id === targetUserId);
+
+    const auditMetadata = {
+      admin_name: adminProfile?.full_name || "Desconocido",
+      admin_email: adminProfile?.email || "Sin email",
+      target_name: targetProfile?.full_name || "Desconocido",
+      target_email: targetProfile?.email || "Sin email",
+    };
 
     if (action === "ban") {
       // Ban en Auth (GoTrue)
@@ -111,7 +121,7 @@ Deno.serve(async (req) => {
       );
 
       if (banErr) {
-        return json(500, { error: "Failed to ban user", details: banErr.message });
+        return json(req, 500, { error: "Failed to ban user", details: banErr.message });
       }
 
       // Sync en profiles (para tu UI)
@@ -120,7 +130,15 @@ Deno.serve(async (req) => {
         .update({ is_active: false })
         .eq("id", targetUserId);
 
-      return json(200, { ok: true, action: "ban", targetUserId });
+      // Audit Log
+      await adminClient.from("admin_audit_logs").insert({
+        admin_id: callerId,
+        target_user_id: targetUserId,
+        action: "ban",
+        metadata: auditMetadata
+      });
+
+      return json(req, 200, { ok: true, action: "ban", targetUserId });
     }
 
     if (action === "unban") {
@@ -131,7 +149,7 @@ Deno.serve(async (req) => {
       );
 
       if (unbanErr) {
-        return json(500, {
+        return json(req, 500, {
           error: "Failed to unban user",
           details: unbanErr.message,
         });
@@ -143,11 +161,19 @@ Deno.serve(async (req) => {
         .update({ is_active: true })
         .eq("id", targetUserId);
 
-      return json(200, { ok: true, action: "unban", targetUserId });
+      // Audit Log
+      await adminClient.from("admin_audit_logs").insert({
+        admin_id: callerId,
+        target_user_id: targetUserId,
+        action: "unban",
+        metadata: auditMetadata
+      });
+
+      return json(req, 200, { ok: true, action: "unban", targetUserId });
     }
 
-    return json(400, { error: "Unhandled action" });
+    return json(req, 400, { error: "Unhandled action" });
   } catch (e) {
-    return json(500, { error: "Unexpected error", details: String(e) });
+    return json(req, 500, { error: "Unexpected error", details: String(e) });
   }
 });
