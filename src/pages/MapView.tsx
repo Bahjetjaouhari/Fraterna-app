@@ -184,6 +184,11 @@ export const MapView: React.FC = () => {
   const isFetchingRef = useRef(false);
   const pendingFetchRef = useRef(false);
 
+  // ✅ Caché de relaciones (friends + allowlist) — se refresca cada 60s, no cada fetch
+  const relationsCache = useRef<{ friends: Set<string>; allowlisted: Set<string> } | null>(null);
+  const relationsCacheTs = useRef<number>(0);
+  const RELATIONS_CACHE_TTL = 60_000; // 60 segundos
+
   // -----------------------------
   // Bottom nav measure
   // -----------------------------
@@ -405,8 +410,13 @@ export const MapView: React.FC = () => {
     try {
       if (!user?.id) return;
 
-      // Relaciones para privacidad (amigos / allowlist)
-      const { friends, allowlisted } = await loadViewerRelations(user.id);
+      // Relaciones para privacidad (amigos / allowlist) — cacheadas 60s
+      const now = Date.now();
+      if (!relationsCache.current || now - relationsCacheTs.current > RELATIONS_CACHE_TTL) {
+        relationsCache.current = await loadViewerRelations(user.id);
+        relationsCacheTs.current = now;
+      }
+      const { friends, allowlisted } = relationsCache.current;
 
       const { data, error } = await supabase
         .from("locations")
@@ -548,49 +558,60 @@ export const MapView: React.FC = () => {
 
     setIsUpdatingLocation(true);
 
-    navigator.geolocation.getCurrentPosition(
-      async (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
+    const onSuccess = async (position: GeolocationPosition) => {
+      const { latitude, longitude, accuracy } = position.coords;
 
-        setMyLat(latitude);
-        setMyLng(longitude);
+      setMyLat(latitude);
+      setMyLng(longitude);
 
-        if (center) centerOn(latitude, longitude);
+      if (center) centerOn(latitude, longitude);
 
-        const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy)));
+      const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy)));
 
-        try {
-          const { error } = await supabase
-            .from("locations")
-            .upsert(
-              {
-                user_id: user.id,
-                lat: latitude,
-                lng: longitude,
-                accuracy_meters: clampedAccuracy,
-                updated_at: new Date().toISOString(),
-              },
-              { onConflict: "user_id" }
-            );
+      try {
+        const { error } = await supabase
+          .from("locations")
+          .upsert(
+            {
+              user_id: user.id,
+              lat: latitude,
+              lng: longitude,
+              accuracy_meters: clampedAccuracy,
+              updated_at: new Date().toISOString(),
+            },
+            { onConflict: "user_id" }
+          );
 
-          if (error) throw error;
+        if (error) throw error;
 
-          await supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", user.id);
+        await supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", user.id);
 
-          checkProximityAlerts(brothers);
-        } catch (e) {
-          console.error("Error updating location:", e);
-          toast.error("Error al actualizar ubicación");
-        } finally {
-          setIsUpdatingLocation(false);
-        }
-      },
-      (error) => {
-        console.error("Geolocation error:", error);
-        toast.error("No se pudo obtener tu ubicación");
+        checkProximityAlerts(brothers);
+      } catch (e) {
+        console.error("Error updating location:", e);
+        toast.error("Error al actualizar ubicación");
+      } finally {
         setIsUpdatingLocation(false);
+      }
+    };
+
+    // Primero intentar con alta precisión (GPS móvil)
+    navigator.geolocation.getCurrentPosition(
+      onSuccess,
+      (highAccErr) => {
+        // Si falla por timeout o posición no disponible, reintentar con baja precisión (WiFi/IP)
+        console.warn("High accuracy failed, retrying with low accuracy:", highAccErr.message);
+        navigator.geolocation.getCurrentPosition(
+          onSuccess,
+          (lowAccErr) => {
+            console.error("Geolocation error (both attempts):", lowAccErr);
+            toast.error("No se pudo obtener tu ubicación. Activa los servicios de ubicación de Windows.");
+            setIsUpdatingLocation(false);
+          },
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
+        );
       },
-      { enableHighAccuracy: true, timeout: 12000, maximumAge: 0 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
     );
   };
 

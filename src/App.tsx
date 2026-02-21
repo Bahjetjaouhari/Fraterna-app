@@ -6,6 +6,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
+import ErrorBoundary from "@/components/ErrorBoundary";
 
 // Eager: páginas de entrada (carga inicial rápida)
 import Index from "./pages/Index";
@@ -39,74 +40,76 @@ const App = () => (
       <Sonner position="top-center" />
       <BrowserRouter>
         <AuthProvider>
-          <Suspense fallback={<PageLoader />}>
-            <Routes>
-              {/* Splash / Entry */}
-              <Route path="/" element={<Index />} />
+          <ErrorBoundary>
+            <Suspense fallback={<PageLoader />}>
+              <Routes>
+                {/* Splash / Entry */}
+                <Route path="/" element={<Index />} />
 
-              {/* Onboarding & Auth */}
-              <Route path="/onboarding" element={<Onboarding />} />
-              <Route path="/register" element={<Register />} />
-              <Route path="/login" element={<Login />} />
-              <Route path="/verification" element={<Verification />} />
+                {/* Onboarding & Auth */}
+                <Route path="/onboarding" element={<Onboarding />} />
+                <Route path="/register" element={<Register />} />
+                <Route path="/login" element={<Login />} />
+                <Route path="/verification" element={<Verification />} />
 
-              {/* Main App - Protected */}
-              <Route
-                path="/map"
-                element={
-                  <ProtectedRoute requireVerification>
-                    <MapView />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/chat"
-                element={
-                  <ProtectedRoute requireVerification>
-                    <Chat />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/emergency/chat"
-                element={
-                  <ProtectedRoute requireVerification>
-                    <EmergencyChat />
-                  </ProtectedRoute>
-                }
-              />
+                {/* Main App - Protected */}
+                <Route
+                  path="/map"
+                  element={
+                    <ProtectedRoute requireVerification>
+                      <MapView />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/chat"
+                  element={
+                    <ProtectedRoute requireVerification>
+                      <Chat />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/emergency/chat"
+                  element={
+                    <ProtectedRoute requireVerification>
+                      <EmergencyChat />
+                    </ProtectedRoute>
+                  }
+                />
 
-              <Route
-                path="/profile"
-                element={
-                  <ProtectedRoute>
-                    <Profile />
-                  </ProtectedRoute>
-                }
-              />
-              <Route
-                path="/friends"
-                element={
-                  <ProtectedRoute requireVerification>
-                    <Friends />
-                  </ProtectedRoute>
-                }
-              />
+                <Route
+                  path="/profile"
+                  element={
+                    <ProtectedRoute>
+                      <Profile />
+                    </ProtectedRoute>
+                  }
+                />
+                <Route
+                  path="/friends"
+                  element={
+                    <ProtectedRoute requireVerification>
+                      <Friends />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Admin - Protected */}
-              <Route
-                path="/admin"
-                element={
-                  <ProtectedRoute requireAdmin>
-                    <AdminPanel />
-                  </ProtectedRoute>
-                }
-              />
+                {/* Admin - Protected */}
+                <Route
+                  path="/admin"
+                  element={
+                    <ProtectedRoute requireAdmin>
+                      <AdminPanel />
+                    </ProtectedRoute>
+                  }
+                />
 
-              {/* Catch-all */}
-              <Route path="*" element={<NotFound />} />
-            </Routes>
-          </Suspense>
+                {/* Catch-all */}
+                <Route path="*" element={<NotFound />} />
+              </Routes>
+            </Suspense>
+          </ErrorBoundary>
         </AuthProvider>
       </BrowserRouter>
     </TooltipProvider>

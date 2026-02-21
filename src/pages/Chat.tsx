@@ -114,7 +114,25 @@ export default function Chat() {
 
     const channel = supabase
       .channel("chat-global")
-      .on("postgres_changes", { event: "*", schema: "public", table: "chat_messages" }, () => {
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "chat_messages" }, (payload) => {
+        // ✅ Append incremental: solo agregar el nuevo mensaje, sin re-descargar todo
+        const newMsg = payload.new as ChatMessage;
+        if (newMsg && newMsg.id && !newMsg.deleted_by_admin) {
+          setMessages((prev) => {
+            // Evitar duplicado (por si fetchMessages ya lo incluyó)
+            if (prev.some((m) => m.id === newMsg.id)) return prev;
+            return [...prev, newMsg];
+          });
+          // Cargar perfil del autor si no lo tenemos
+          fetchProfilesForMessages([newMsg]);
+        }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "chat_messages" }, () => {
+        // UPDATE = moderación admin (deleted_by_admin) → refetch completo
+        fetchMessages();
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "chat_messages" }, () => {
+        // DELETE = limpieza de chat → refetch completo
         fetchMessages();
       })
       .subscribe();
@@ -240,11 +258,10 @@ export default function Chat() {
                     </div>
 
                     <div
-                      className={`${
-                        isMe
+                      className={`${isMe
                           ? "bg-primary text-primary-foreground rounded-2xl rounded-br-md"
                           : "bg-card border border-border rounded-2xl rounded-bl-md"
-                      } px-4 py-3`}
+                        } px-4 py-3`}
                     >
                       <p className="text-sm">{message.content ?? ""}</p>
 
