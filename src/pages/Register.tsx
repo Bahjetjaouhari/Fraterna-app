@@ -134,7 +134,7 @@ export const Register: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen bg-background">
+    <div className="min-h-screen bg-map-bg">
       {/* Header */}
       <div className="bg-navy pt-12 pb-8 px-6">
         <Link to="/onboarding" className="text-ivory/60 text-sm mb-4 inline-block">

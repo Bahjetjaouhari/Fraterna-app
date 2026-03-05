@@ -1,11 +1,12 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { Locate, Settings, Ghost, Users, ZoomIn, ZoomOut, Loader2 } from "lucide-react";
+import { Locate, Settings, Ghost, Users, ZoomIn, ZoomOut, Loader2, Map as MapIcon, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { UserProfileModal } from "@/components/UserProfileModal";
 
 import maplibregl, { Map as MapLibreMap, Marker as MapLibreMarker, Popup as MapLibrePopup } from "maplibre-gl";
 
@@ -45,6 +46,7 @@ interface BrotherLocation {
     stealth_mode: boolean;
     tracking_enabled?: boolean;
     location_visibility_mode?: "public" | "friends" | "friends_selected";
+    photo_url?: string;
   };
 }
 
@@ -158,7 +160,10 @@ export const MapView: React.FC = () => {
   const prevStealthRef = useRef<boolean>(false);
 
   const [selectedBrother, setSelectedBrother] = useState<string | null>(null);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [brothers, setBrothers] = useState<BrotherLocation[]>([]);
+  const [showMapStyles, setShowMapStyles] = useState(false);
+  const [mapStyle, setMapStyle] = useState("streets-v2");
   const [isLoading, setIsLoading] = useState(true);
   const [isUpdatingLocation, setIsUpdatingLocation] = useState(false);
 
@@ -321,7 +326,7 @@ export const MapView: React.FC = () => {
 
     const map = new maplibregl.Map({
       container: mapDivRef.current,
-      style: "https://basemaps.cartocdn.com/gl/voyager-gl-style/style.json",
+      style: `https://api.maptiler.com/maps/streets-v2/style.json?key=${import.meta.env.VITE_MAPTILER_KEY}`,
       center: initialCenter,
       zoom: 6,
       minZoom: 3,
@@ -332,6 +337,8 @@ export const MapView: React.FC = () => {
       dragRotate: false,
       pitchWithRotate: false,
       touchPitch: false,
+      maxTileCacheSize: 150,
+      pixelRatio: 1,
     });
 
     mapRef.current = map;
@@ -432,7 +439,8 @@ export const MapView: React.FC = () => {
              city,
              stealth_mode,
              tracking_enabled,
-             location_visibility_mode
+             location_visibility_mode,
+             photo_url
            )`
         )
         .neq("user_id", user.id);
@@ -476,35 +484,172 @@ export const MapView: React.FC = () => {
   };
 
   // -----------------------------
-  // Markers (MapLibre) - ultra fluido
+  // Markers (MapLibre) - Traje Masón
   // -----------------------------
-  const makeDotEl = (variant: "me" | "bro") => {
-    const el = document.createElement("div");
-    el.style.width = variant === "me" ? "18px" : "16px";
-    el.style.height = variant === "me" ? "18px" : "16px";
-    el.style.borderRadius = "999px";
-    el.style.background = variant === "me" ? "#d4af37" : "#3b82f6";
-    el.style.border = "3px solid rgba(0,0,0,0.35)";
-    el.style.boxShadow =
-      variant === "me" ? "0 0 0 6px rgba(212,175,55,0.25)" : "0 0 0 5px rgba(59,130,246,0.20)";
-    el.style.cursor = "pointer";
-    return el;
+  const makeMarkerEl = (
+    variant: "me" | "bro",
+    photoUrl?: string,
+    name?: string,
+    isNearby?: boolean
+  ) => {
+    const isMe = variant === "me";
+    const size = isMe ? 48 : 42;
+    const photoSize = isMe ? 32 : 28;
+
+    // Container - NO usar transform/transition aquí (MapLibre lo usa internamente)
+    const container = document.createElement("div");
+    container.style.width = `${size}px`;
+    container.style.height = `${size + 10}px`;
+    container.style.position = "relative";
+    container.style.cursor = "pointer";
+    container.style.display = "flex";
+    container.style.flexDirection = "column";
+    container.style.alignItems = "center";
+
+    // Badge body (the "suit")
+    const badge = document.createElement("div");
+    badge.style.width = `${size}px`;
+    badge.style.height = `${size}px`;
+    badge.style.borderRadius = "50% 50% 50% 50% / 40% 40% 60% 60%";
+    badge.style.background = isMe
+      ? "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)"
+      : "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
+    badge.style.border = isMe ? "2.5px solid #d4af37" : "2px solid rgba(212,175,55,0.35)";
+    badge.style.display = "flex";
+    badge.style.alignItems = "center";
+    badge.style.justifyContent = "center";
+    badge.style.position = "relative";
+    badge.style.boxShadow = isMe
+      ? "0 2px 12px rgba(212,175,55,0.4), 0 0 0 3px rgba(212,175,55,0.15)"
+      : "0 2px 8px rgba(0,0,0,0.4)";
+
+    // Proximity glow
+    if (isNearby && !isMe) {
+      badge.style.boxShadow = "0 0 0 4px rgba(212,175,55,0.3), 0 0 16px rgba(212,175,55,0.5)";
+      badge.style.animation = "marker-glow 2s ease-in-out infinite";
+    }
+
+    // Pulse animation for own marker
+    if (isMe) {
+      badge.style.animation = "marker-pulse 3s ease-in-out infinite";
+    }
+
+    // Photo circle
+    const photoCircle = document.createElement("div");
+    photoCircle.style.width = `${photoSize}px`;
+    photoCircle.style.height = `${photoSize}px`;
+    photoCircle.style.borderRadius = "50%";
+    photoCircle.style.overflow = "hidden";
+    photoCircle.style.border = isMe ? "2px solid #d4af37" : "1.5px solid rgba(212,175,55,0.5)";
+    photoCircle.style.position = "relative";
+    photoCircle.style.zIndex = "2";
+
+    if (photoUrl) {
+      const img = document.createElement("img");
+      img.src = photoUrl;
+      img.alt = name || "QH";
+      img.style.width = "100%";
+      img.style.height = "100%";
+      img.style.objectFit = "cover";
+      img.style.display = "block";
+      photoCircle.appendChild(img);
+    } else {
+      // Initials fallback
+      const parts = (name || "").trim().split(/\s+/).filter(Boolean);
+      const initials = ((parts[0]?.[0] ?? "Q") + (parts.length > 1 ? parts[parts.length - 1]?.[0] : "H")).toUpperCase();
+      photoCircle.style.background = "rgba(212,175,55,0.15)";
+      photoCircle.style.display = "flex";
+      photoCircle.style.alignItems = "center";
+      photoCircle.style.justifyContent = "center";
+      const span = document.createElement("span");
+      span.textContent = initials;
+      span.style.color = "#d4af37";
+      span.style.fontSize = isMe ? "13px" : "11px";
+      span.style.fontWeight = "700";
+      span.style.fontFamily = "system-ui, sans-serif";
+      photoCircle.appendChild(span);
+    }
+
+    badge.appendChild(photoCircle);
+
+    // Decorative "V" lapel notch (SVG)
+    const lapelSvg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    lapelSvg.setAttribute("viewBox", "0 0 24 8");
+    lapelSvg.setAttribute("width", "18");
+    lapelSvg.setAttribute("height", "6");
+    lapelSvg.style.position = "absolute";
+    lapelSvg.style.bottom = "-1px";
+    lapelSvg.style.left = "50%";
+    lapelSvg.style.transform = "translateX(-50%)";
+    lapelSvg.style.zIndex = "1";
+    const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    path.setAttribute("d", "M2,0 L12,7 L22,0");
+    path.setAttribute("fill", "none");
+    path.setAttribute("stroke", isMe ? "#d4af37" : "rgba(212,175,55,0.4)");
+    path.setAttribute("stroke-width", isMe ? "1.5" : "1");
+    path.setAttribute("stroke-linecap", "round");
+    path.setAttribute("stroke-linejoin", "round");
+    lapelSvg.appendChild(path);
+    badge.appendChild(lapelSvg);
+
+    container.appendChild(badge);
+
+    // Pointer triangle at bottom
+    const pointer = document.createElement("div");
+    pointer.style.width = "0";
+    pointer.style.height = "0";
+    pointer.style.borderLeft = "5px solid transparent";
+    pointer.style.borderRight = "5px solid transparent";
+    pointer.style.borderTop = isMe ? "6px solid #d4af37" : "6px solid rgba(212,175,55,0.35)";
+    pointer.style.marginTop = "-1px";
+    container.appendChild(pointer);
+
+    // Hover effect (en el badge, NO en el container)
+    badge.style.transition = "filter 0.2s ease";
+    container.addEventListener("mouseenter", () => { badge.style.filter = "brightness(1.3)"; });
+    container.addEventListener("mouseleave", () => { badge.style.filter = "brightness(1)"; });
+
+    return container;
   };
+
+  // Inject CSS animations for markers (once)
+  useEffect(() => {
+    if (document.getElementById("fraterna-marker-styles")) return;
+    const style = document.createElement("style");
+    style.id = "fraterna-marker-styles";
+    style.textContent = `
+      @keyframes marker-pulse {
+        0%, 100% { box-shadow: 0 2px 12px rgba(212,175,55,0.4), 0 0 0 3px rgba(212,175,55,0.15); }
+        50% { box-shadow: 0 2px 16px rgba(212,175,55,0.6), 0 0 0 5px rgba(212,175,55,0.25); }
+      }
+      @keyframes marker-glow {
+        0%, 100% { box-shadow: 0 0 0 4px rgba(212,175,55,0.3), 0 0 16px rgba(212,175,55,0.5); }
+        50% { box-shadow: 0 0 0 6px rgba(212,175,55,0.5), 0 0 24px rgba(212,175,55,0.7); }
+      }
+    `;
+    document.head.appendChild(style);
+  }, []);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
+    // -- My marker --
     if (myLat != null && myLng != null) {
-      if (!myMarkerRef.current) {
-        myMarkerRef.current = new maplibregl.Marker({ element: makeDotEl("me") })
-          .setLngLat([myLng, myLat])
-          .addTo(map);
-      } else {
-        myMarkerRef.current.setLngLat([myLng, myLat]);
+      if (myMarkerRef.current) {
+        myMarkerRef.current.remove();
+        myMarkerRef.current = null;
       }
+      const myPhotoUrl = profile?.photo_url as string | undefined;
+      const myName = profile?.full_name as string | undefined;
+      const myEl = makeMarkerEl("me", myPhotoUrl, myName);
+      myEl.style.zIndex = "50";
+      myMarkerRef.current = new maplibregl.Marker({ element: myEl })
+        .setLngLat([myLng, myLat])
+        .addTo(map);
     }
 
+    // -- Brother markers --
     const nextIds = new Set<string>();
 
     for (const b of brothers) {
@@ -513,21 +658,27 @@ export const MapView: React.FC = () => {
 
       nextIds.add(b.user_id);
 
-      const existing = brotherMarkersByIdRef.current[b.user_id];
-
-      if (existing) {
-        existing.setLngLat([b.lng, b.lat]);
-        continue;
+      // Calculate proximity
+      let isNearby = false;
+      let distKm = Infinity;
+      if (myLat != null && myLng != null) {
+        distKm = haversineDistance(myLat, myLng, b.lat, b.lng);
+        isNearby = distKm < 1;
       }
 
-      const el = makeDotEl("bro");
-      el.addEventListener("click", () => setSelectedBrother(b.user_id));
+      // Remove old marker to update photo/proximity state
+      const existing = brotherMarkersByIdRef.current[b.user_id];
+      if (existing) existing.remove();
 
-      const popup = new MapLibrePopup({ offset: 12 }).setText(b.profile?.full_name ?? "Q∴H∴");
+      const el = makeMarkerEl("bro", b.profile?.photo_url, b.profile?.full_name, isNearby);
+      el.style.zIndex = isNearby ? "100" : "10";
+      el.addEventListener("click", (e) => {
+        e.stopPropagation();
+        setProfileModalUserId(b.user_id);
+      });
 
       const marker = new maplibregl.Marker({ element: el })
         .setLngLat([b.lng, b.lat])
-        .setPopup(popup)
         .addTo(map);
 
       brotherMarkersByIdRef.current[b.user_id] = marker;
@@ -540,7 +691,7 @@ export const MapView: React.FC = () => {
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brothers, myLat, myLng]);
+  }, [brothers, myLat, myLng, profile?.photo_url]);
 
   useEffect(() => {
     return () => {
@@ -712,6 +863,25 @@ export const MapView: React.FC = () => {
   const zoomIn = () => mapRef.current?.zoomIn({ duration: 0 });
   const zoomOut = () => mapRef.current?.zoomOut({ duration: 0 });
 
+  // Map styles available from MapTiler
+  const MAP_STYLES = [
+    { id: "streets-v2", name: "Calles", emoji: "🗺️" },
+    { id: "satellite", name: "Satélite", emoji: "🛰️" },
+    { id: "outdoor-v2", name: "Exterior", emoji: "🏔️" },
+    { id: "topo-v2", name: "Topográfico", emoji: "📊" },
+    { id: "dataviz", name: "Moderno", emoji: "✨" },
+  ];
+
+  const changeMapStyle = (styleId: string) => {
+    const map = mapRef.current;
+    if (!map) return;
+    const key = import.meta.env.VITE_MAPTILER_KEY;
+    const url = `https://api.maptiler.com/maps/${styleId}/style.json?key=${key}`;
+    map.setStyle(url);
+    setMapStyle(styleId);
+    setShowMapStyles(false);
+  };
+
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
       {/* ✅ CAMBIO ÚNICO: de "relative" a pantalla fija para bloquear el scroll del documento */}
@@ -787,53 +957,62 @@ export const MapView: React.FC = () => {
             {isUpdatingLocation ? <Loader2 size={24} className="animate-spin" /> : <Locate size={24} />}
           </Button>
 
-          <Button variant="masonic-dark" size="icon" className="pointer-events-auto" title="Opciones">
+          <Button
+            variant="masonic-dark"
+            size="icon"
+            className="pointer-events-auto"
+            title="Estilos de mapa"
+            onClick={() => setShowMapStyles(!showMapStyles)}
+          >
             <Settings size={20} />
           </Button>
         </div>
 
-        {/* PANEL DE QH SELECCIONADO */}
-        {selectedBrother && (
+        {/* MAP STYLE SELECTOR PANEL */}
+        {showMapStyles && (
           <motion.div
-            initial={{ y: 100, opacity: 0 }}
-            animate={{ y: 0, opacity: 1 }}
-            exit={{ y: 100, opacity: 0 }}
-            className="absolute left-4 right-4 glass-dark rounded-xl p-4 z-40 pointer-events-auto"
-            style={{ bottom: `calc(${bottomOffset} + 84px)` }}
+            initial={{ opacity: 0, y: 20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.95 }}
+            transition={{ duration: 0.2 }}
+            className="absolute right-4 z-30 pointer-events-auto"
+            style={{ bottom: `calc(${bottomOffset} + 60px)` }}
           >
-            {(() => {
-              const b = brothers.find((x) => x.user_id === selectedBrother);
-              if (!b) return null;
-
-              return (
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-3">
-                    <div className="avatar-masonic w-12 h-12 flex items-center justify-center">
-                      <div className="w-10 h-10 rounded-full bg-navy flex items-center justify-center">
-                        <span className="text-gold font-bold">QH</span>
-                      </div>
-                    </div>
-                    <div>
-                      <h3 className="text-ivory font-medium">{b.profile?.full_name}</h3>
-                      <p className="text-ivory/60 text-sm">{b.profile?.city}</p>
-                    </div>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-gold font-semibold">~{getDistanceKm(b.lat, b.lng)} km</p>
-                    <p className="text-ivory/60 text-xs">{b.profile?.stealth_mode ? "En modo fantasma" : "Activo"}</p>
-                  </div>
+            <div className="glass-dark rounded-xl p-3 w-48 space-y-1">
+              <div className="flex items-center justify-between mb-2">
+                <div className="flex items-center gap-2">
+                  <MapIcon size={14} className="text-gold" />
+                  <span className="text-ivory text-xs font-semibold">Estilo de mapa</span>
                 </div>
-              );
-            })()}
-
-            <button
-              onClick={() => setSelectedBrother(null)}
-              className="absolute -top-2 -right-2 w-6 h-6 bg-navy rounded-full flex items-center justify-center text-ivory/60 hover:text-ivory"
-            >
-              ×
-            </button>
+                <button
+                  onClick={() => setShowMapStyles(false)}
+                  className="text-ivory/40 hover:text-ivory transition-colors"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              {MAP_STYLES.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => changeMapStyle(s.id)}
+                  className={`w-full flex items-center gap-2 px-3 py-2 rounded-lg text-sm transition-colors ${mapStyle === s.id
+                      ? "bg-gold/20 text-gold border border-gold/30"
+                      : "text-ivory/80 hover:bg-ivory/10"
+                    }`}
+                >
+                  <span className="text-base">{s.emoji}</span>
+                  <span>{s.name}</span>
+                </button>
+              ))}
+            </div>
           </motion.div>
         )}
+
+        {/* USER PROFILE MODAL (desde mapa) */}
+        <UserProfileModal
+          userId={profileModalUserId}
+          onClose={() => setProfileModalUserId(null)}
+        />
 
         {/* INDICADOR STEALTH */}
         {stealthMode && (

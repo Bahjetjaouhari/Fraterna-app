@@ -423,7 +423,7 @@ export const Profile: React.FC = () => {
                     variant="outline"
                     onClick={cancelEditing}
                     disabled={isUpdating}
-                    className="border-gold/30 !text-ivory hover:bg-gold/10"
+                    className="border-gold/30 text-gold hover:bg-gold/10 hover:text-gold font-semibold"
                   >
                     Cancelar
                   </Button>
@@ -461,7 +461,8 @@ export const Profile: React.FC = () => {
 
                 <Button
                   onClick={startEditing}
-                  className="w-full border border-gold/30 bg-transparent !text-gold hover:bg-gold/10 font-semibold"
+                  variant="outline"
+                  className="w-full border-gold/30 text-gold hover:bg-gold/10 hover:text-gold font-semibold"
                 >
                   <Pencil size={16} className="mr-2" />
                   Editar Perfil

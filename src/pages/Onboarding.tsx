@@ -68,7 +68,7 @@ export const Onboarding: React.FC = () => {
     // In production, this would request actual permissions
     // For now, we simulate granting
     setPermissionsGranted(prev => ({ ...prev, [type]: true }));
-    
+
     // Auto-advance after granting
     setTimeout(() => handleNext(), 500);
   };
@@ -83,13 +83,12 @@ export const Onboarding: React.FC = () => {
         {steps.map((_, index) => (
           <div
             key={index}
-            className={`h-2 rounded-full transition-all duration-300 ${
-              index === currentStep 
-                ? "w-8 bg-gold" 
-                : index < currentStep 
-                  ? "w-2 bg-gold/60" 
+            className={`h-2 rounded-full transition-all duration-300 ${index === currentStep
+                ? "w-8 bg-gold"
+                : index < currentStep
+                  ? "w-2 bg-gold/60"
                   : "w-2 bg-ivory/20"
-            }`}
+              }`}
           />
         ))}
       </div>
@@ -116,7 +115,7 @@ export const Onboarding: React.FC = () => {
             </h1>
 
             {/* Description */}
-            <p className="text-ivory/70 text-lg leading-relaxed mb-8">
+            <p className="text-ivory/70 text-base leading-relaxed mb-8">
               {step.description}
             </p>
 
@@ -124,7 +123,7 @@ export const Onboarding: React.FC = () => {
             {step.action && (
               <div className="mb-4">
                 {(currentStep === 2 && permissionsGranted.location) ||
-                 (currentStep === 3 && permissionsGranted.notifications) ? (
+                  (currentStep === 3 && permissionsGranted.notifications) ? (
                   <div className="flex items-center gap-2 text-success">
                     <Check size={20} />
                     <span>Permiso concedido</span>
@@ -145,7 +144,7 @@ export const Onboarding: React.FC = () => {
       </div>
 
       {/* Bottom Action */}
-      <div className="px-8 pb-12 safe-area-bottom">
+      <div className="px-8 pb-12 safe-area-bottom relative z-10">
         <Button
           variant="masonic"
           size="xl"
