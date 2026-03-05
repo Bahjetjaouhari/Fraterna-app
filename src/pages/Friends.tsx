@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useMemo, useState } from "react";
+﻿import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { motion } from "framer-motion";
 import { Check, Loader2, Search, UserPlus, UserX, Users, X } from "lucide-react";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { UserProfileModal } from "@/components/UserProfileModal";
 
 type FriendshipRow = {
   id: string;
@@ -65,6 +66,7 @@ const Friends: React.FC = () => {
   const [allowlist, setAllowlist] = useState<AllowlistRow[]>([]);
 
   const [searchResults, setSearchResults] = useState<ProfileRow[]>([]);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const acceptedFriendIds = useMemo(() => {
     if (!myId) return new Set<string>();
@@ -114,7 +116,7 @@ const Friends: React.FC = () => {
 
     const rows = (data ?? []) as FriendshipRow[];
 
-    // OJO: aquí ignoramos blocked para que no se muestre
+    // OJO: aquÃ­ ignoramos blocked para que no se muestre
     setIncoming(rows.filter((r) => r.addressee_id === myId && r.status === "pending"));
     setOutgoing(rows.filter((r) => r.requester_id === myId && r.status === "pending"));
     setAccepted(rows.filter((r) => r.status === "accepted"));
@@ -219,7 +221,7 @@ const Friends: React.FC = () => {
     }
   }, [myId, query]);
 
-  // Alias para mantener tu UI como está (botón Buscar usa doSearch)
+  // Alias para mantener tu UI como estÃ¡ (botÃ³n Buscar usa doSearch)
   const doSearch = runSearch;
 
   const sendRequest = useCallback(
@@ -227,7 +229,7 @@ const Friends: React.FC = () => {
       if (!myId) return;
 
       try {
-        // Buscar si ya existe relación (evita unique constraint)
+        // Buscar si ya existe relaciÃ³n (evita unique constraint)
         const { data: existingRows, error: findErr } = await supabase
           .from("friendships")
           .select("id,status,requester_id,addressee_id")
@@ -280,7 +282,7 @@ const Friends: React.FC = () => {
     [myId, refreshAll]
   );
 
-  // ✅ FIX: aceptar solo si yo soy el addressee y el status es pending
+  // âœ… FIX: aceptar solo si yo soy el addressee y el status es pending
   const acceptRequest = useCallback(
     async (rowId: string) => {
       if (!myId) return;
@@ -297,7 +299,7 @@ const Friends: React.FC = () => {
         if (error) throw error;
 
         if (!data || data.length === 0) {
-          toast.error("No se pudo aceptar (no autorizado o ya no está pendiente).");
+          toast.error("No se pudo aceptar (no autorizado o ya no estÃ¡ pendiente).");
           await refreshAll();
           return;
         }
@@ -392,178 +394,203 @@ const Friends: React.FC = () => {
 
   return (
     <AppLayout isAdmin={isAdmin}>
-      {/* ✅ wrapper para fondo azul igual a la barra inferior */}
-      <div className="min-h-screen bg-[hsl(var(--navy))]">
-        <div className="p-4 max-w-3xl mx-auto">
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-xl bg-navy/60 border border-gold/30 flex items-center justify-center">
-              <Users className="text-gold" size={22} />
-            </div>
-            <div>
-              <div className="text-lg font-bold text-ivory">Amigos</div>
-              <div className="text-xs text-ivory/60">Solicitudes, lista de amigos y permitidos</div>
-            </div>
-            <div className="ml-auto">
-              <Button variant="outline" onClick={refreshAll} disabled={isLoading}>
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Actualizar"}
-              </Button>
-            </div>
-          </motion.div>
-
-          <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="card-masonic-dark p-4 mb-4">
-            <div className="text-sm font-semibold text-ivory mb-2">Buscar hermanos</div>
-            <div className="flex gap-2">
-              <div className="relative flex-1">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-ivory/50" size={16} />
-                <input
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  onKeyDown={onEnter}
-                  placeholder="Nombre o email"
-                  className="w-full pl-9 pr-3 py-2 rounded-md bg-navy/60 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40"
-                />
+      <div
+        className="bg-map-bg"
+        style={{ position: "fixed", inset: 0, overflow: "hidden" }}
+      >
+        <div
+          className="flex flex-col bg-map-bg"
+          style={{
+            height: "calc(100dvh - var(--bottom-nav-h, 5rem) - env(safe-area-inset-bottom, 0px))",
+          }}
+        >
+          {/* Header */}
+          <div className="px-4 py-3 border-b border-gold/15 bg-navy">
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-gold/15 border border-gold/30 flex items-center justify-center">
+                <Users className="text-gold" size={22} />
               </div>
-              <Button onClick={doSearch} disabled={isLoading} className="btn-masonic">
-                {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Buscar"}
-              </Button>
-            </div>
+              <div>
+                <div className="text-lg font-bold text-ivory">Amigos</div>
+                <div className="text-xs text-ivory/60">
+                  {friends.length} amigos {incoming.length > 0 && `\u00b7 ${incoming.length} solicitudes`}
+                </div>
+              </div>
+              <div className="ml-auto">
+                <Button size="sm" onClick={refreshAll} disabled={isLoading} className="border border-gold/30 bg-transparent !text-gold hover:bg-gold/10 font-semibold">
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Actualizar"}
+                </Button>
+              </div>
+            </motion.div>
+          </div>
 
-            {searchResults.length > 0 && (
-              <div className="mt-4 space-y-2">
-                {searchResults.map((p: any) => {
-                  // Best-effort para no romper tu UI si ya tenías relation/requestId
-                  const rel = p.relation ?? "none";
-                  return (
-                    <div key={p.id} className="flex items-center justify-between gap-3 rounded-lg bg-navy/50 border border-gold/15 px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ivory truncate">{p.full_name || "Sin nombre"}</div>
-                        <div className="text-xs text-ivory/60 truncate">
-                          {(p.lodge_name ? p.lodge_name : p.lodge ? p.lodge : "Sin logia") + (p.city ? ` • ${p.city}` : "")}
+          {/* Scrollable content */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-5">
+            {/* Buscar hermanos */}
+            <motion.div initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} className="rounded-xl bg-navy/60 border border-gold/15 p-4">
+              <div className="text-sm font-bold text-gold mb-3">Buscar hermanos</div>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-ivory/50" size={16} />
+                  <input
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    onKeyDown={onEnter}
+                    placeholder="Nombre o email"
+                    className="w-full pl-9 pr-3 py-2.5 rounded-lg bg-navy/80 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40"
+                  />
+                </div>
+                <Button onClick={doSearch} disabled={isLoading} className="bg-gold text-navy font-bold hover:bg-gold/90 px-5">
+                  {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : "Buscar"}
+                </Button>
+              </div>
+
+              {searchResults.length > 0 && (
+                <div className="mt-4 space-y-2">
+                  {searchResults.map((p: any) => {
+                    const rel = p.relation ?? "none";
+                    return (
+                      <div key={p.id} className="flex items-center gap-3 rounded-lg bg-navy/70 border border-gold/10 px-3 py-2.5">
+                        <AvatarInitials name={p.full_name} />
+                        <div className="min-w-0 flex-1">
+                          <div className="text-sm font-bold text-ivory truncate cursor-pointer hover:underline" onClick={() => setSelectedUserId(p.id)}>{p.full_name || "Sin nombre"}</div>
+                          <div className="text-xs text-ivory/50 truncate">
+                            {(p.lodge || "Sin logia") + (p.city ? ` \u00b7 ${p.city}` : "")}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 shrink-0">
+                          {rel === "none" && (
+                            <Button size="sm" onClick={() => sendRequest(p.id)} disabled={isLoading} className="bg-gold text-navy font-bold hover:bg-gold/90">
+                              <UserPlus className="h-4 w-4 mr-1" /> Enviar
+                            </Button>
+                          )}
+                          {rel === "incoming" && p.requestId && (
+                            <>
+                              <Button size="sm" onClick={() => acceptRequest(p.requestId!)} disabled={isLoading} className="bg-gold text-navy font-bold">
+                                <Check className="h-4 w-4 mr-1" /> Aceptar
+                              </Button>
+                              <Button size="sm" variant="outline" onClick={() => rejectRequest(p.requestId!)} disabled={isLoading} className="border-red-500/30 text-red-400">
+                                <X className="h-4 w-4" />
+                              </Button>
+                            </>
+                          )}
+                          {rel === "outgoing" && p.requestId && (
+                            <Button size="sm" variant="outline" onClick={() => cancelRequest(p.requestId!)} disabled={isLoading} className="border-ivory/20 text-ivory/70">
+                              <UserX className="h-4 w-4 mr-1" /> Cancelar
+                            </Button>
+                          )}
+                          {rel === "friend" && p.requestId && (
+                            <Button size="sm" variant="outline" onClick={() => removeFriend(p.requestId!)} disabled={isLoading} className="border-red-500/30 text-red-400">
+                              <UserX className="h-4 w-4 mr-1" /> Quitar
+                            </Button>
+                          )}
                         </div>
                       </div>
+                    );
+                  })}
+                </div>
+              )}
+            </motion.div>
 
-                      <div className="flex items-center gap-2">
-                        {rel === "none" && (
-                          <Button size="sm" onClick={() => sendRequest(p.id)} disabled={isLoading} className="btn-masonic">
-                            <UserPlus className="h-4 w-4 mr-2" /> Enviar
-                          </Button>
-                        )}
-
-                        {rel === "incoming" && p.requestId && (
-                          <>
-                            <Button size="sm" onClick={() => acceptRequest(p.requestId!)} disabled={isLoading} className="btn-masonic">
-                              <Check className="h-4 w-4 mr-2" /> Aceptar
-                            </Button>
-                            <Button size="sm" variant="outline" onClick={() => rejectRequest(p.requestId!)} disabled={isLoading}>
-                              <X className="h-4 w-4 mr-2" /> Rechazar
-                            </Button>
-                          </>
-                        )}
-
-                        {rel === "outgoing" && p.requestId && (
-                          <Button size="sm" variant="outline" onClick={() => cancelRequest(p.requestId!)} disabled={isLoading}>
-                            <UserX className="h-4 w-4 mr-2" /> Cancelar
-                          </Button>
-                        )}
-
-                        {rel === "friend" && p.requestId && (
-                          <Button size="sm" variant="outline" onClick={() => removeFriend(p.requestId!)} disabled={isLoading}>
-                            <UserX className="h-4 w-4 mr-2" /> Quitar
-                          </Button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </motion.div>
-
-          <div className="space-y-6">
-            <div>
-              <div className="text-sm font-semibold text-ivory mb-2">Solicitudes recibidas</div>
-              {incomingRows.length === 0 ? (
-                <div className="text-xs text-ivory/60">No tienes solicitudes pendientes.</div>
-              ) : (
+            {/* Solicitudes recibidas */}
+            {incomingRows.length > 0 && (
+              <div>
+                <div className="text-sm font-bold text-gold mb-3 flex items-center gap-2">
+                  Solicitudes recibidas
+                  <span className="bg-gold text-navy text-xs font-bold px-2 py-0.5 rounded-full">{incomingRows.length}</span>
+                </div>
                 <div className="space-y-2">
                   {incomingRows.map((r: any) => (
-                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg bg-navy/50 border border-gold/15 px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ivory truncate">{r.requester?.full_name || "Sin nombre"}</div>
-                        <div className="text-xs text-ivory/60 truncate">
-                          {(r.requester?.lodge_name ? r.requester?.lodge_name : r.requester?.lodge ? r.requester?.lodge : "Sin logia") +
-                            (r.requester?.city ? ` • ${r.requester?.city}` : "")}
+                    <div key={r.id} className="flex items-center gap-3 rounded-lg bg-navy/60 border border-gold/15 px-3 py-2.5">
+                      <AvatarInitials name={r.requester?.full_name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-ivory truncate cursor-pointer hover:underline" onClick={() => setSelectedUserId(r.requester_id)}>{r.requester?.full_name || "Sin nombre"}</div>
+                        <div className="text-xs text-ivory/50 truncate">
+                          {(r.requester?.lodge || "Sin logia") + (r.requester?.city ? ` \u00b7 ${r.requester?.city}` : "")}
                         </div>
                       </div>
-                      <div className="flex items-center gap-2">
-                        <Button size="sm" onClick={() => acceptRequest(r.id)} disabled={isLoading} className="btn-masonic">
-                          <Check className="h-4 w-4 mr-2" /> Aceptar
+                      <div className="flex items-center gap-2 shrink-0">
+                        <Button size="sm" onClick={() => acceptRequest(r.id)} disabled={isLoading} className="bg-gold text-navy font-bold hover:bg-gold/90">
+                          <Check className="h-4 w-4 mr-1" /> Aceptar
                         </Button>
-                        <Button size="sm" variant="outline" onClick={() => rejectRequest(r.id)} disabled={isLoading}>
-                          <X className="h-4 w-4 mr-2" /> Rechazar
+                        <Button size="sm" variant="outline" onClick={() => rejectRequest(r.id)} disabled={isLoading} className="border-red-500/30 text-red-400">
+                          <X className="h-4 w-4" />
                         </Button>
                       </div>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
-            <div>
-              <div className="text-sm font-semibold text-ivory mb-2">Solicitudes enviadas</div>
-              {outgoingRows.length === 0 ? (
-                <div className="text-xs text-ivory/60">No tienes solicitudes enviadas.</div>
-              ) : (
+            {/* Solicitudes enviadas */}
+            {outgoingRows.length > 0 && (
+              <div>
+                <div className="text-sm font-bold text-gold mb-3 flex items-center gap-2">
+                  Solicitudes enviadas
+                  <span className="bg-ivory/10 text-ivory/70 text-xs font-bold px-2 py-0.5 rounded-full">{outgoingRows.length}</span>
+                </div>
                 <div className="space-y-2">
                   {outgoingRows.map((r: any) => (
-                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg bg-navy/50 border border-gold/15 px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ivory truncate">{r.addressee?.full_name || "Sin nombre"}</div>
-                        <div className="text-xs text-ivory/60 truncate">
-                          {(r.addressee?.lodge_name ? r.addressee?.lodge_name : r.addressee?.lodge ? r.addressee?.lodge : "Sin logia") +
-                            (r.addressee?.city ? ` • ${r.addressee?.city}` : "")}
+                    <div key={r.id} className="flex items-center gap-3 rounded-lg bg-navy/60 border border-gold/15 px-3 py-2.5">
+                      <AvatarInitials name={r.addressee?.full_name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-ivory truncate cursor-pointer hover:underline" onClick={() => setSelectedUserId(r.addressee_id)}>{r.addressee?.full_name || "Sin nombre"}</div>
+                        <div className="text-xs text-ivory/50 truncate">
+                          {(r.addressee?.lodge || "Sin logia") + (r.addressee?.city ? ` \u00b7 ${r.addressee?.city}` : "")}
                         </div>
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => cancelRequest(r.id)} disabled={isLoading}>
-                        <UserX className="h-4 w-4 mr-2" /> Cancelar
+                      <Button size="sm" variant="outline" onClick={() => cancelRequest(r.id)} disabled={isLoading} className="border-ivory/20 text-ivory/70 shrink-0">
+                        <UserX className="h-4 w-4 mr-1" /> Cancelar
                       </Button>
                     </div>
                   ))}
                 </div>
-              )}
-            </div>
+              </div>
+            )}
 
+            {/* Mis amigos */}
             <div>
-              <div className="text-sm font-semibold text-ivory mb-2">Mis amigos</div>
+              <div className="text-sm font-bold text-gold mb-3 flex items-center gap-2">
+                Mis amigos
+                <span className="bg-gold/15 text-gold text-xs font-bold px-2 py-0.5 rounded-full">{friends.length}</span>
+              </div>
               {friends.length === 0 ? (
-                <div className="text-xs text-ivory/60">Aún no tienes amigos aceptados.</div>
+                <div className="rounded-lg bg-navy/40 border border-gold/10 px-4 py-6 text-center">
+                  <Users className="mx-auto text-gold/30 mb-2" size={32} />
+                  <p className="text-sm text-ivory/50">No tienes amigos aceptados.</p>
+                  <p className="text-xs text-ivory/30 mt-1">Usa el buscador para encontrar hermanos</p>
+                </div>
               ) : (
                 <div className="space-y-2">
                   {friends.map((r: any) => (
-                    <div key={r.id} className="flex items-center justify-between gap-3 rounded-lg bg-navy/50 border border-gold/15 px-3 py-2">
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-ivory truncate">{r.friend?.full_name || "Sin nombre"}</div>
-                        <div className="text-xs text-ivory/60 truncate">
-                          {(r.friend?.lodge_name ? r.friend?.lodge_name : r.friend?.lodge ? r.friend?.lodge : "Sin logia") + (r.friend?.city ? ` • ${r.friend?.city}` : "")}
+                    <div key={r.id} className="flex items-center gap-3 rounded-lg bg-navy/60 border border-gold/15 px-3 py-2.5">
+                      <AvatarInitials name={r.friend?.full_name} />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-sm font-bold text-ivory truncate cursor-pointer hover:underline" onClick={() => { const otherId = r.requester_id === myId ? r.addressee_id : r.requester_id; setSelectedUserId(otherId); }}>{r.friend?.full_name || "Sin nombre"}</div>
+                        <div className="text-xs text-ivory/50 truncate">
+                          {(r.friend?.lodge || "Sin logia") + (r.friend?.city ? ` \u00b7 ${r.friend?.city}` : "")}
                         </div>
                       </div>
-                      <Button size="sm" variant="outline" onClick={() => removeFriend(r.id)} disabled={isLoading}>
-                        <UserX className="h-4 w-4 mr-2" /> Quitar
+                      <Button size="sm" variant="outline" onClick={() => removeFriend(r.id)} disabled={isLoading} className="border-red-500/30 text-red-400 shrink-0">
+                        <UserX className="h-4 w-4 mr-1" /> Quitar
                       </Button>
                     </div>
                   ))}
                 </div>
               )}
 
-              <div className="mt-3 text-[11px] text-ivory/55">
-                Tip: el botón <span className="text-gold">Permitir</span> controla tu lista de “Amigos permitidos” (para el modo “Amigos seleccionados”).
+              <div className="mt-4 text-[11px] text-ivory/40 text-center">
+                Tip: el bot&oacute;n <span className="text-gold">Permitir</span> controla tu lista de &ldquo;Amigos permitidos&rdquo; (para el modo &ldquo;Amigos seleccionados&rdquo;).
               </div>
             </div>
           </div>
         </div>
       </div>
+      <UserProfileModal userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
     </AppLayout>
   );
 };
 
 export default Friends;
+

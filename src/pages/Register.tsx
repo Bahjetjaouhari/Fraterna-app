@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useRef } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
 import { User, Mail, Phone, MapPin, Building2, Camera, ChevronRight, Eye, EyeOff } from "lucide-react";
@@ -8,6 +8,8 @@ import { Label } from "@/components/ui/label";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
+import { resizeImageForAvatar } from "@/utils/resizeImage";
 
 interface RegisterFormData {
   fullName: string;
@@ -25,6 +27,9 @@ export const Register: React.FC = () => {
   const { signUp } = useAuth();
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [photoFile, setPhotoFile] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const [formData, setFormData] = useState<RegisterFormData>({
     fullName: "",
     email: "",
@@ -35,6 +40,17 @@ export const Register: React.FC = () => {
     lodge: "",
   });
 
+  const handlePhotoSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("La imagen no puede superar 5MB");
+      return;
+    }
+    setPhotoFile(file);
+    setPhotoPreview(URL.createObjectURL(file));
+  };
+
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
@@ -42,7 +58,7 @@ export const Register: React.FC = () => {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    
+
     // Basic validation
     if (!formData.fullName || !formData.email || !formData.password) {
       toast.error("Por favor completa los campos requeridos");
@@ -54,20 +70,30 @@ export const Register: React.FC = () => {
       return;
     }
 
+    if (!formData.phone.trim()) {
+      toast.error("El teléfono es obligatorio");
+      return;
+    }
+
     if (!formData.city || !formData.lodge) {
       toast.error("Por favor indica tu ciudad y logia");
+      return;
+    }
+
+    if (!photoFile) {
+      toast.error("La foto de perfil es obligatoria");
       return;
     }
 
     setIsLoading(true);
 
     try {
-      const { error } = await signUp(formData.email, formData.password, {
+      const { error, data: signUpData } = await signUp(formData.email, formData.password, {
         full_name: formData.fullName,
         city: formData.city,
         lodge: formData.lodge,
         country: formData.country || 'Venezuela',
-        phone: formData.phone || '',
+        phone: formData.phone,
       });
 
       if (error) {
@@ -77,6 +103,25 @@ export const Register: React.FC = () => {
           toast.error(error.message || "Error al crear la cuenta");
         }
         return;
+      }
+
+      // Upload photo if we have a user ID
+      const userId = signUpData?.user?.id;
+      if (userId && photoFile) {
+        try {
+          const ext = "jpg";
+          const filePath = `${userId}/avatar.${ext}`;
+          const resizedFile = await resizeImageForAvatar(photoFile, 512, 0.92);
+          await supabase.storage.from("avatars").upload(filePath, resizedFile, {
+            upsert: true,
+            contentType: "image/jpeg",
+          });
+          const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
+          await supabase.from("profiles").update({ photo_url: urlData.publicUrl }).eq("id", userId);
+        } catch (photoErr) {
+          console.error("Photo upload during registration:", photoErr);
+          // Don't block registration for photo error
+        }
       }
 
       toast.success("Cuenta creada. Procede con la verificación masónica.");
@@ -116,13 +161,25 @@ export const Register: React.FC = () => {
         <div className="flex justify-center">
           <button
             type="button"
-            className="relative w-24 h-24 rounded-full bg-muted border-2 border-dashed border-gold/30 flex items-center justify-center hover:border-gold/60 transition-colors"
+            onClick={() => fileInputRef.current?.click()}
+            className="relative w-24 h-24 rounded-full border-2 border-dashed border-gold/30 flex items-center justify-center hover:border-gold/60 transition-colors overflow-hidden"
           >
-            <Camera className="w-8 h-8 text-muted-foreground" />
+            {photoPreview ? (
+              <img src={photoPreview} alt="Preview" className="w-full h-full object-cover rounded-full" />
+            ) : (
+              <Camera className="w-8 h-8 text-muted-foreground" />
+            )}
             <span className="absolute -bottom-6 text-xs text-muted-foreground">
-              Foto (opcional)
+              Foto *
             </span>
           </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/jpeg,image/png,image/webp,image/gif"
+            onChange={handlePhotoSelect}
+            className="hidden"
+          />
         </div>
 
         {/* Name */}
@@ -191,7 +248,7 @@ export const Register: React.FC = () => {
         <div className="space-y-2">
           <Label htmlFor="phone" className="flex items-center gap-2 text-foreground">
             <Phone size={16} className="text-gold" />
-            Teléfono
+            Teléfono *
           </Label>
           <Input
             id="phone"
@@ -201,6 +258,7 @@ export const Register: React.FC = () => {
             onChange={handleChange}
             placeholder="+58 424 123 4567"
             className="input-masonic"
+            required
           />
         </div>
 

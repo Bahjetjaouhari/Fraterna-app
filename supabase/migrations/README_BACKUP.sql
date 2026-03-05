@@ -1,0 +1,18 @@
+-- =============================================
+-- BACKUP REFERENCIA — Migraciones aplicadas en Supabase LIVE
+-- Proyecto: vzlbvknauwvrqwpvtaqe (Fraterna V2)
+-- Fecha de snapshot: 2026-03-04
+-- =============================================
+-- 
+-- Las migraciones locales anteriores estaban desactualizadas respecto al
+-- estado real de la base de datos en Supabase. Se eliminaron los archivos
+-- viejos y se deja esta referencia del estado actual.
+--
+-- Migraciones aplicadas en la BD remota:
+--   1. 20260305022005_fix_search_path_functions
+--   2. 20260305022016_restrict_verification_questions_insert
+--
+-- NOTA: El esquema completo de la BD (tablas, funciones, RLS, triggers)
+-- fue creado/modificado directamente en el dashboard de Supabase y via
+-- Edge Functions. Consultar el dashboard para el esquema completo.
+-- =============================================

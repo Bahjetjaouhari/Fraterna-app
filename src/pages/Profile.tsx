@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import {
@@ -13,6 +13,10 @@ import {
   ChevronRight,
   Check,
   Loader2,
+  Pencil,
+  Save,
+  Phone,
+  Camera,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -20,6 +24,7 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
+import { resizeImageForAvatar } from "@/utils/resizeImage";
 import { toast } from "sonner";
 
 const proximityOptions = [
@@ -34,8 +39,75 @@ export const Profile: React.FC = () => {
   const { profile, user, signOut, refreshProfile, isAdmin } = useAuth();
   const [isUpdating, setIsUpdating] = useState(false);
 
+  // Edit mode
+  const [isEditing, setIsEditing] = useState(false);
+  const [editName, setEditName] = useState("");
+  const [editLodge, setEditLodge] = useState("");
+  const [editCity, setEditCity] = useState("");
+  const [editPhone, setEditPhone] = useState("");
+
+  // Photo upload
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingPhoto, setIsUploadingPhoto] = useState(false);
+
+  const avatarInitials = useMemo(() => {
+    const name = profile?.full_name || "";
+    const parts = name.trim().split(/\s+/).filter(Boolean);
+    const a = parts[0]?.[0] ?? "?";
+    const b = parts.length > 1 ? parts[parts.length - 1]?.[0] : "";
+    return (a + b).toUpperCase();
+  }, [profile?.full_name]);
+
+  const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > 5 * 1024 * 1024) {
+      toast.error("La imagen no puede superar 5MB");
+      return;
+    }
+
+    setIsUploadingPhoto(true);
+    try {
+      const ext = "jpg"; // always JPEG after resize
+      const filePath = `${user.id}/avatar.${ext}`;
+
+      // Resize for crisp avatar display
+      const resizedFile = await resizeImageForAvatar(file, 512, 0.92);
+
+      // Upload (upsert)
+      const { error: uploadError } = await supabase.storage
+        .from("avatars")
+        .upload(filePath, resizedFile, { upsert: true, contentType: "image/jpeg" });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: urlData } = supabase.storage.from("avatars").getPublicUrl(filePath);
+      const photoUrl = urlData.publicUrl + "?t=" + Date.now(); // cache bust
+
+      // Update profile
+      const { error: updateError } = await supabase
+        .from("profiles")
+        .update({ photo_url: photoUrl })
+        .eq("id", user.id);
+
+      if (updateError) throw updateError;
+
+      await refreshProfile();
+      toast.success("Foto actualizada");
+    } catch (err: any) {
+      console.error("Photo upload error:", err);
+      toast.error("No se pudo subir la foto: " + (err?.message || "error"));
+    } finally {
+      setIsUploadingPhoto(false);
+      // Reset input so same file can be re-selected
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
   // Friends allowlist (for 'friends_selected')
-  const [friends, setFriends] = useState<Array<{ id: string; full_name: string | null }>>([]);
+  const [friends, setFriends] = useState<Array<{ id: string; full_name: string | null }>>([]);;
   const [allowedIds, setAllowedIds] = useState<string[]>([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
 
@@ -172,6 +244,47 @@ export const Profile: React.FC = () => {
     navigate("/");
   };
 
+  const startEditing = () => {
+    setEditName(profile?.full_name || "");
+    setEditLodge(profile?.lodge || "");
+    setEditCity(profile?.city || "");
+    setEditPhone(profile?.phone || "");
+    setIsEditing(true);
+  };
+
+  const cancelEditing = () => {
+    setIsEditing(false);
+  };
+
+  const saveProfile = async () => {
+    if (!user) return;
+    setIsUpdating(true);
+    try {
+      const updates: Record<string, string> = {};
+      if (editName.trim()) updates.full_name = editName.trim();
+      if (editLodge.trim() !== (profile?.lodge || "")) updates.lodge = editLodge.trim();
+      if (editCity.trim() !== (profile?.city || "")) updates.city = editCity.trim();
+      if (editPhone.trim() !== (profile?.phone || "")) updates.phone = editPhone.trim();
+
+      if (Object.keys(updates).length === 0) {
+        setIsEditing(false);
+        return;
+      }
+
+      const { error } = await supabase.from("profiles").update(updates).eq("id", user.id);
+      if (error) throw error;
+
+      await refreshProfile();
+      toast.success("Perfil actualizado correctamente");
+      setIsEditing(false);
+    } catch (error) {
+      console.error("Error updating profile:", error);
+      toast.error("Error al actualizar el perfil");
+    } finally {
+      setIsUpdating(false);
+    }
+  };
+
   if (!profile) {
     return (
       <AppLayout showNav={true} isAdmin={isAdmin}>
@@ -184,14 +297,41 @@ export const Profile: React.FC = () => {
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin}>
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-screen bg-map-bg pb-24">
         {/* Header */}
         <div className="bg-navy pt-12 pb-8 px-6 safe-area-top">
           <div className="flex items-center gap-4">
-            <div className="avatar-masonic w-20 h-20 flex items-center justify-center">
-              <div className="w-16 h-16 rounded-full bg-navy-light flex items-center justify-center">
-                <MasonicSymbol size={40} className="text-gold" />
-              </div>
+            <div className="relative group">
+              {profile.photo_url ? (
+                <img
+                  src={profile.photo_url}
+                  alt={profile.full_name || "Avatar"}
+                  className="w-20 h-20 rounded-full object-cover border-2 border-gold/40"
+                />
+              ) : (
+                <div className="w-20 h-20 rounded-full bg-gold/15 border-2 border-gold/40 flex items-center justify-center">
+                  <span className="text-gold font-bold text-2xl">{avatarInitials}</span>
+                </div>
+              )}
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isUploadingPhoto}
+                className="absolute inset-0 w-20 h-20 rounded-full bg-black/50 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity cursor-pointer"
+              >
+                {isUploadingPhoto ? (
+                  <Loader2 className="w-6 h-6 text-white animate-spin" />
+                ) : (
+                  <Camera className="w-6 h-6 text-white" />
+                )}
+              </button>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/jpeg,image/png,image/webp,image/gif"
+                onChange={handlePhotoUpload}
+                className="hidden"
+              />
             </div>
             <div className="flex-1">
               <div className="flex items-center gap-2">
@@ -226,37 +366,108 @@ export const Profile: React.FC = () => {
               Información Personal
             </h2>
 
-            <div className="space-y-3">
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-muted-foreground">Logia</span>
-                <span className="flex items-center gap-2">
-                  <Building2 size={16} className="text-gold" />
-                  {profile.lodge}
-                </span>
-              </div>
-              <div className="flex items-center justify-between py-2 border-b border-border">
-                <span className="text-muted-foreground">Estado</span>
-                {profile.is_verified ? (
-                  <span className="badge-verified">
-                    <Shield size={12} />
-                    Verificado
-                  </span>
-                ) : (
-                  <span className="text-warning text-sm">Pendiente</span>
-                )}
-              </div>
-              {profile.phone && (
-                <div className="flex items-center justify-between py-2 border-b border-border">
-                  <span className="text-muted-foreground">Teléfono</span>
-                  <span>{profile.phone}</span>
+            {isEditing ? (
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground">Nombre completo</label>
+                  <input
+                    value={editName}
+                    onChange={(e) => setEditName(e.target.value)}
+                    placeholder="Tu nombre completo"
+                    className="w-full px-3 py-2 rounded-md bg-navy/60 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40 text-sm"
+                  />
                 </div>
-              )}
-            </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Building2 size={12} className="text-gold" /> Logia
+                  </label>
+                  <input
+                    value={editLodge}
+                    onChange={(e) => setEditLodge(e.target.value)}
+                    placeholder="Nombre de tu logia"
+                    className="w-full px-3 py-2 rounded-md bg-navy/60 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <MapPin size={12} className="text-gold" /> Ciudad
+                  </label>
+                  <input
+                    value={editCity}
+                    onChange={(e) => setEditCity(e.target.value)}
+                    placeholder="Tu ciudad"
+                    className="w-full px-3 py-2 rounded-md bg-navy/60 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40 text-sm"
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label className="text-xs text-muted-foreground flex items-center gap-1">
+                    <Phone size={12} className="text-gold" /> Teléfono
+                  </label>
+                  <input
+                    value={editPhone}
+                    onChange={(e) => setEditPhone(e.target.value)}
+                    placeholder="+58 412 1234567"
+                    className="w-full px-3 py-2 rounded-md bg-navy/60 border border-gold/20 text-ivory placeholder:text-ivory/40 focus:outline-none focus:ring-2 focus:ring-gold/40 text-sm"
+                  />
+                </div>
+                <div className="flex gap-2 pt-2">
+                  <Button
+                    onClick={saveProfile}
+                    disabled={isUpdating}
+                    className="flex-1 bg-gold hover:bg-gold/90 text-navy font-semibold"
+                  >
+                    {isUpdating ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save size={16} className="mr-2" />}
+                    Guardar
+                  </Button>
+                  <Button
+                    variant="outline"
+                    onClick={cancelEditing}
+                    disabled={isUpdating}
+                    className="border-gold/30 !text-ivory hover:bg-gold/10"
+                  >
+                    Cancelar
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <>
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between py-2 border-b border-border">
+                    <span className="text-muted-foreground">Logia</span>
+                    <span className="flex items-center gap-2">
+                      <Building2 size={16} className="text-gold" />
+                      {profile.lodge || <span className="text-ivory/40 italic">Sin logia</span>}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between py-2 border-b border-border">
+                    <span className="text-muted-foreground">Estado</span>
+                    {profile.is_verified ? (
+                      <span className="badge-verified">
+                        <Shield size={12} />
+                        Verificado
+                      </span>
+                    ) : (
+                      <span className="text-warning text-sm">Pendiente</span>
+                    )}
+                  </div>
+                  <div className="flex items-center justify-between py-2 border-b border-border">
+                    <span className="text-muted-foreground">Teléfono</span>
+                    <span className="flex items-center gap-2">
+                      <Phone size={16} className="text-gold" />
+                      {profile.phone || <span className="text-ivory/40 italic">No configurado</span>}
+                    </span>
+                  </div>
+                </div>
 
-            <Button variant="outline" className="w-full">
-              Editar Perfil
-              <ChevronRight size={16} />
-            </Button>
+                <Button
+                  onClick={startEditing}
+                  className="w-full border border-gold/30 bg-transparent !text-gold hover:bg-gold/10 font-semibold"
+                >
+                  <Pencil size={16} className="mr-2" />
+                  Editar Perfil
+                </Button>
+              </>
+            )}
           </motion.div>
 
           {/* Privacy Settings */}
@@ -442,11 +653,10 @@ export const Profile: React.FC = () => {
                         setProximityRadius(option.value);
                         updateProfileValue("proximity_radius_km", option.value);
                       }}
-                      className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${
-                        proximityRadius === option.value
-                          ? "bg-primary text-primary-foreground"
-                          : "bg-muted text-muted-foreground hover:bg-muted/80"
-                      }`}
+                      className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${proximityRadius === option.value
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground hover:bg-muted/80"
+                        }`}
                     >
                       {option.label}
                     </button>

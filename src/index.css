@@ -117,16 +117,29 @@
   }
 
   body {
-    @apply bg-background text-foreground antialiased;
+    @apply bg-map-bg text-foreground antialiased;
     font-family: 'Inter', sans-serif;
   }
 
-  h1, h2, h3, h4, h5, h6 {
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     font-family: 'Cinzel', serif;
+  }
+
+  img {
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
+    transform: translateZ(0);
+    backface-visibility: hidden;
   }
 }
 
 @layer components {
+
   /* Masonic Button Variants */
   .btn-masonic {
     @apply relative overflow-hidden font-medium tracking-wide;

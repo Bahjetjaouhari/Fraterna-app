@@ -12,6 +12,8 @@ import {
   UserCheck,
   UserPlus,
   UserMinus,
+  Building2,
+  Filter,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -27,6 +29,7 @@ type ProfileRow = {
   role: string | null;
   is_active: boolean | null;
   created_at: string | null;
+  lodge: string | null;
 };
 
 const SUPER_ADMIN_IDS = (import.meta.env.VITE_SUPER_ADMIN_IDS ?? "")
@@ -54,6 +57,7 @@ export const AdminPanel: React.FC = () => {
   const [usersLoading, setUsersLoading] = useState(false);
   const [usersRefreshing, setUsersRefreshing] = useState(false);
   const [searchTerm, setSearchTerm] = useState("");
+  const [lodgeFilter, setLodgeFilter] = useState("");
 
   const isProtectedUser = (userId: string) => SUPER_ADMIN_IDS.includes(userId);
 
@@ -117,7 +121,7 @@ export const AdminPanel: React.FC = () => {
     try {
       const { data, error } = await supabase
         .from("profiles")
-        .select("id,email,full_name,role,is_active,created_at")
+        .select("id,email,full_name,role,is_active,created_at,lodge")
         .order("created_at", { ascending: false });
 
       if (error) {
@@ -232,20 +236,40 @@ export const AdminPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
-  const filteredUsers = useMemo(() => {
-    const q = searchTerm.trim().toLowerCase();
-    if (!q) return users;
-
-    return users.filter((u) => {
-      const name = (u.full_name ?? "").toLowerCase();
-      const email = (u.email ?? "").toLowerCase();
-      return name.includes(q) || email.includes(q);
+  const uniqueLodges = useMemo(() => {
+    const lodgeMap = new Map<string, number>();
+    users.forEach((u) => {
+      const l = (u.lodge ?? "").trim();
+      if (l) lodgeMap.set(l, (lodgeMap.get(l) ?? 0) + 1);
     });
-  }, [users, searchTerm]);
+    return Array.from(lodgeMap.entries()).sort((a, b) => a[0].localeCompare(b[0]));
+  }, [users]);
+
+  const filteredUsers = useMemo(() => {
+    let list = users;
+
+    // Lodge filter
+    if (lodgeFilter) {
+      list = list.filter((u) => (u.lodge ?? "").trim().toLowerCase() === lodgeFilter.toLowerCase());
+    }
+
+    // Search term
+    const q = searchTerm.trim().toLowerCase();
+    if (q) {
+      list = list.filter((u) => {
+        const name = (u.full_name ?? "").toLowerCase();
+        const email = (u.email ?? "").toLowerCase();
+        const lodge = (u.lodge ?? "").toLowerCase();
+        return name.includes(q) || email.includes(q) || lodge.includes(q);
+      });
+    }
+
+    return list;
+  }, [users, searchTerm, lodgeFilter]);
 
   return (
     <AppLayout showNav isAdmin>
-      <div className="min-h-screen bg-background pb-24">
+      <div className="min-h-screen bg-map-bg pb-24">
         {/* Header */}
         <div className="bg-navy pt-12 pb-6 px-6 safe-area-top">
           <div className="flex items-center gap-3">
@@ -292,14 +316,30 @@ export const AdminPanel: React.FC = () => {
                     </div>
 
                     <div className="flex items-center gap-2 w-full sm:w-auto">
-                      <div className="flex items-center gap-2 bg-muted px-3 py-2 rounded-lg w-full sm:w-[320px]">
+                      <div className="flex items-center gap-2 bg-muted px-3 py-2 rounded-lg w-full sm:w-[280px]">
                         <Search size={16} className="text-muted-foreground" />
                         <input
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          placeholder="Buscar por nombre o email..."
+                          placeholder="Nombre, email o logia..."
                           className="bg-transparent outline-none text-sm w-full"
                         />
+                      </div>
+
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Building2 size={16} className="text-gold" />
+                        <select
+                          value={lodgeFilter}
+                          onChange={(e) => setLodgeFilter(e.target.value)}
+                          className="bg-muted text-sm rounded-lg px-2 py-2 outline-none border-none max-w-[160px]"
+                        >
+                          <option value="">Todas las logias</option>
+                          {uniqueLodges.map(([name, count]) => (
+                            <option key={name} value={name}>
+                              {name} ({count})
+                            </option>
+                          ))}
+                        </select>
                       </div>
 
                       <Button
@@ -346,11 +386,10 @@ export const AdminPanel: React.FC = () => {
                                 </p>
 
                                 <span
-                                  className={`text-xs px-2 py-0.5 rounded-full border ${
-                                    active
-                                      ? "border-green-500/30 text-green-600"
-                                      : "border-red-500/30 text-red-600"
-                                  }`}
+                                  className={`text-xs px-2 py-0.5 rounded-full border ${active
+                                    ? "border-green-500/30 text-green-600"
+                                    : "border-red-500/30 text-red-600"
+                                    }`}
                                 >
                                   {active ? "Activo" : "Baneado"}
                                 </span>
@@ -369,6 +408,11 @@ export const AdminPanel: React.FC = () => {
                               <p className="text-sm text-muted-foreground truncate">
                                 {u.email || "Sin email"}
                               </p>
+                              {u.lodge && (
+                                <p className="text-xs text-gold/70 truncate flex items-center gap-1">
+                                  <Building2 size={10} /> {u.lodge}
+                                </p>
+                              )}
                               <p className="text-xs text-muted-foreground/80 truncate">
                                 ID: {u.id}
                               </p>

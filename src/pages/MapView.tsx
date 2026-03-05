@@ -168,6 +168,11 @@ export const MapView: React.FC = () => {
   const [myLat, setMyLat] = useState<number | null>(null);
   const [myLng, setMyLng] = useState<number | null>(null);
 
+  // Reverse geocoding
+  const [geoCity, setGeoCity] = useState<string | null>(null);
+  const [geoCountry, setGeoCountry] = useState<string | null>(null);
+  const lastGeoRef = useRef<string>("");
+
   // MapLibre refs
   const mapDivRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapLibreMap | null>(null);
@@ -656,6 +661,26 @@ export const MapView: React.FC = () => {
     if (myLat == null || myLng == null) return;
 
     map.jumpTo({ center: [myLng, myLat], zoom: Math.max(map.getZoom(), 13) });
+
+    // Reverse geocode
+    const geoKey = `${myLat.toFixed(3)},${myLng.toFixed(3)}`;
+    if (geoKey !== lastGeoRef.current) {
+      lastGeoRef.current = geoKey;
+      fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${myLat}&lon=${myLng}&zoom=10&addressdetails=1`, { headers: { "Accept-Language": "es" } })
+        .then((r) => r.json())
+        .then((data) => {
+          const addr = data?.address;
+          const city = addr?.city || addr?.town || addr?.village || addr?.municipality || addr?.state || null;
+          const country = addr?.country || null;
+          if (city) setGeoCity(city);
+          if (country) setGeoCountry(country);
+          // Update profile city for persistence
+          if (city && user?.id) {
+            supabase.from("profiles").update({ city }).eq("id", user.id).then(() => { });
+          }
+        })
+        .catch(() => { });
+    }
   }, [myLat, myLng]);
 
   const toggleStealthMode = async () => {
@@ -710,7 +735,7 @@ export const MapView: React.FC = () => {
           <div className="glass-dark rounded-lg px-4 py-2 pointer-events-auto">
             <p className="text-ivory/60 text-xs">Tu ubicación</p>
             <p className="text-ivory font-medium">
-              {profile?.city || "Sin ubicación"}, {profile?.country || "Venezuela"}
+              {geoCity || profile?.city || (myLat != null ? "Obteniendo..." : "Sin ubicación")}, {geoCountry || profile?.country || "Venezuela"}
             </p>
           </div>
 

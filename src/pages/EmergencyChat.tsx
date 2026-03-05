@@ -6,6 +6,23 @@ import { AppLayout } from "@/components/layout/AppLayout";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
+import { UserProfileModal } from "@/components/UserProfileModal";
+
+type ProfileMini = { id: string; full_name: string | null; photo_url: string | null };
+
+function AvatarMini({ name, avatarUrl }: { name: string; avatarUrl: string | null }) {
+  const [imgFailed, setImgFailed] = useState(false);
+  const showImage = !!avatarUrl && !imgFailed;
+  return (
+    <div className="w-8 h-8 rounded-full overflow-hidden border border-red-900/30 bg-navy flex items-center justify-center shrink-0">
+      {showImage ? (
+        <img src={avatarUrl!} alt={name} className="w-full h-full object-cover" referrerPolicy="no-referrer" onError={() => setImgFailed(true)} />
+      ) : (
+        <MasonicSymbol size={18} className="text-gold" />
+      )}
+    </div>
+  );
+}
 
 interface EmergencyMessage {
   id: string;
@@ -26,6 +43,19 @@ const EmergencyChat = () => {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+
+  const fetchProfilesForMessages = async (list: EmergencyMessage[]) => {
+    const ids = Array.from(new Set(list.map((m) => m.user_id))).filter(Boolean);
+    const missing = ids.filter((id) => !profilesById[id]);
+    if (missing.length === 0) return;
+    const { data } = await supabase.from("profiles").select("id,full_name,photo_url").in("id", missing);
+    if (!data) return;
+    const next: Record<string, ProfileMini> = {};
+    for (const p of data as ProfileMini[]) next[p.id] = p;
+    setProfilesById((prev) => ({ ...prev, ...next }));
+  };
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   // Ciudad del usuario actual (del perfil)
@@ -55,7 +85,9 @@ const EmergencyChat = () => {
       return;
     }
 
-    setMessages((data as EmergencyMessage[]) || []);
+    const list = (data as EmergencyMessage[]) || [];
+    setMessages(list);
+    fetchProfilesForMessages(list);
     setLoading(false);
   };
 
@@ -76,6 +108,7 @@ const EmergencyChat = () => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
               return [...prev, newMsg];
             });
+            fetchProfilesForMessages([newMsg]);
           }
         }
       )
@@ -196,35 +229,49 @@ const EmergencyChat = () => {
             ) : (
               messages.map((msg) => {
                 const isMine = msg.user_id === user?.id;
-                const name = msg.profiles?.full_name
-                  ? `Q∴H∴ ${msg.profiles.full_name}`
-                  : "Q∴H∴";
+                const p = profilesById[msg.user_id];
+                const displayName = p?.full_name
+                  ? `Q∴H∴ ${p.full_name}`
+                  : msg.profiles?.full_name
+                    ? `Q∴H∴ ${msg.profiles.full_name}`
+                    : "Q∴H∴";
+                const avatarUrl = p?.photo_url ?? null;
 
                 return (
-                  <div key={msg.id} className={isMine ? "text-right" : "text-left"}>
-                    <div
-                      className={[
-                        "inline-block w-fit max-w-[80%] rounded-lg px-3 py-2 text-sm break-words",
-                        isMine
-                          ? "ml-auto bg-gold text-navy"
-                          : "mr-auto bg-navy/80 text-ivory border border-red-900/20",
-                      ].join(" ")}
-                    >
-                      {!isMine && (
-                        <p className="text-xs font-semibold opacity-80 mb-1">
-                          {name}
-                        </p>
-                      )}
-                      <p>{msg.message}</p>
-                      <div className="flex items-center justify-end gap-2 mt-1">
-                        <span className="text-[10px] opacity-50">
-                          {formatTime(msg.created_at)}
-                        </span>
-                        {msg.expires_at && (
-                          <span className="text-[10px] opacity-30">
-                            · {getTimeRemaining(msg.expires_at)}
+                  <div key={msg.id} className={`flex ${isMine ? "justify-end" : "justify-start"}`}>
+                    {!isMine && (
+                      <div className="mr-2 mt-1">
+                        <AvatarMini name={displayName} avatarUrl={avatarUrl} />
+                      </div>
+                    )}
+
+                    <div className="max-w-[80%]">
+                      <div
+                        className={`text-xs font-bold mb-1 cursor-pointer hover:underline ${isMine ? "text-right text-gold" : "text-gold"}`}
+                        onClick={() => !isMine && setSelectedUserId(msg.user_id)}
+                      >
+                        {displayName}
+                      </div>
+
+                      <div
+                        className={[
+                          "rounded-lg px-3 py-2 text-sm break-words",
+                          isMine
+                            ? "bg-gold text-navy rounded-br-md"
+                            : "bg-navy/80 text-ivory border border-red-900/20 rounded-bl-md",
+                        ].join(" ")}
+                      >
+                        <p>{msg.message}</p>
+                        <div className="flex items-center justify-end gap-2 mt-1">
+                          <span className="text-[10px] opacity-50">
+                            {formatTime(msg.created_at)}
                           </span>
-                        )}
+                          {msg.expires_at && (
+                            <span className="text-[10px] opacity-30">
+                              · {getTimeRemaining(msg.expires_at)}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </div>
                   </div>
@@ -255,6 +302,7 @@ const EmergencyChat = () => {
           </div>
         </div>
       </div>
+      <UserProfileModal userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
     </AppLayout>
   );
 };

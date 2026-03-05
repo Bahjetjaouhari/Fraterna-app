@@ -7,6 +7,7 @@ import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { UserProfileModal } from "@/components/UserProfileModal";
 
 interface ChatMessage {
   id: string;
@@ -20,7 +21,7 @@ interface ChatMessage {
 type ProfileMini = {
   id: string;
   full_name: string | null;
-  avatar_url: string | null;
+  photo_url: string | null;
 };
 
 function initialsFromName(name: string) {
@@ -70,6 +71,7 @@ export default function Chat() {
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -80,7 +82,7 @@ export default function Chat() {
 
     const { data, error } = await supabase
       .from("profiles")
-      .select("id,full_name,avatar_url")
+      .select("id,full_name,photo_url")
       .in("id", missing);
 
     if (error || !data) return;
@@ -192,124 +194,138 @@ export default function Chat() {
 
   const getAvatarUrl = (userId: string) => {
     const p = profilesById[userId];
-    return p?.avatar_url ?? null;
+    return p?.photo_url ?? null;
   };
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin}>
-      <div className="h-screen flex flex-col bg-background">
-        {/* Header */}
-        <div className="bg-navy px-4 pt-12 pb-4 safe-area-top">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <MasonicSymbol size={32} className="text-gold" />
-              <div>
-                <h1 className="font-display text-lg text-ivory">Chat Global</h1>
-                <p className="text-ivory/60 text-xs">{messages.length} mensajes activos</p>
+      <div
+        className="bg-map-bg"
+        style={{ position: "fixed", inset: 0, overflow: "hidden" }}
+      >
+        <div
+          className="flex flex-col bg-map-bg"
+          style={{
+            height: "calc(100dvh - var(--bottom-nav-h, 5rem) - env(safe-area-inset-bottom, 0px))",
+          }}
+        >
+          {/* Header */}
+          <div className="bg-navy px-4 pt-12 pb-4 safe-area-top">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <MasonicSymbol size={32} className="text-gold" />
+                <div>
+                  <h1 className="font-display text-lg text-ivory">Chat Global</h1>
+                  <p className="text-ivory/60 text-xs">{messages.length} mensajes activos</p>
+                </div>
+              </div>
+
+              <div className="flex items-center gap-2 text-ivory/60 text-xs">
+                <Clock size={14} />
+                <span>Auto-borrado: 24h</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Messages */}
+          <div className="flex-1 min-h-0 overflow-y-auto px-4 py-4 space-y-4 scrollbar-masonic">
+            <div className="flex items-center justify-center py-2">
+              <div className="flex items-center gap-2 text-muted-foreground text-xs bg-muted rounded-full px-3 py-1">
+                <AlertCircle size={12} />
+                <span>Los mensajes se eliminan automáticamente después de 24h</span>
               </div>
             </div>
 
-            <div className="flex items-center gap-2 text-ivory/60 text-xs">
-              <Clock size={14} />
-              <span>Auto-borrado: 24h</span>
-            </div>
-          </div>
-        </div>
-
-        {/* Messages */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4 scrollbar-masonic">
-          <div className="flex items-center justify-center py-2">
-            <div className="flex items-center gap-2 text-muted-foreground text-xs bg-muted rounded-full px-3 py-1">
-              <AlertCircle size={12} />
-              <span>Los mensajes se eliminan automáticamente después de 24h</span>
-            </div>
-          </div>
-
-          {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <Loader2 className="w-6 h-6 text-gold animate-spin" />
-            </div>
-          ) : messages.length === 0 ? (
-            <div className="flex items-center justify-center py-8 text-center">
-              <div>
-                <MasonicSymbol size={48} className="text-gold/40 mx-auto mb-4" />
-                <p className="text-muted-foreground">No hay mensajes aún</p>
-                <p className="text-sm text-muted-foreground">Sé el primero en saludar</p>
+            {isLoading ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="w-6 h-6 text-gold animate-spin" />
               </div>
-            </div>
-          ) : (
-            messages.map((message) => {
-              const isMe = message.user_id === user?.id;
+            ) : messages.length === 0 ? (
+              <div className="flex items-center justify-center py-8 text-center">
+                <div>
+                  <MasonicSymbol size={48} className="text-gold/40 mx-auto mb-4" />
+                  <p className="text-muted-foreground">No hay mensajes aún</p>
+                  <p className="text-sm text-muted-foreground">Sé el primero en saludar</p>
+                </div>
+              </div>
+            ) : (
+              messages.map((message) => {
+                const isMe = message.user_id === user?.id;
 
-              const name = getDisplayName(message.user_id, isMe);
-              const avatarUrlForOther = getAvatarUrl(message.user_id);
+                const name = getDisplayName(message.user_id, isMe);
+                const avatarUrlForOther = getAvatarUrl(message.user_id);
 
-              return (
-                <div key={message.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                  {!isMe && (
-                    <div className="mr-2 mt-1">
-                      <AvatarMini name={name} avatarUrl={avatarUrlForOther} />
-                    </div>
-                  )}
+                return (
+                  <div key={message.id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                    {!isMe && (
+                      <div className="mr-2 mt-1">
+                        <AvatarMini name={name} avatarUrl={avatarUrlForOther} />
+                      </div>
+                    )}
 
-                  <div className="max-w-[80%]">
-                    <div className={`text-[11px] text-muted-foreground mb-1 ${isMe ? "text-right" : ""}`}>
-                      {name}
-                    </div>
+                    <div className="max-w-[80%]">
+                      <div
+                        className={`text-xs font-bold mb-1 cursor-pointer hover:underline ${isMe ? "text-right text-gold" : "text-gold"}`}
+                        onClick={() => !isMe && setSelectedUserId(message.user_id)}
+                      >
+                        {name}
+                      </div>
 
-                    <div
-                      className={`${isMe
+                      <div
+                        className={`${isMe
                           ? "bg-primary text-primary-foreground rounded-2xl rounded-br-md"
                           : "bg-card border border-border rounded-2xl rounded-bl-md"
-                        } px-4 py-3`}
-                    >
-                      <p className="text-sm">{message.content ?? ""}</p>
+                          } px-4 py-3`}
+                      >
+                        <p className="text-sm">{message.content ?? ""}</p>
 
-                      <div className="flex items-center justify-end gap-2 mt-1">
-                        <span className="text-[10px] opacity-50">{formatTime(message.created_at)}</span>
-                        <span className="text-[10px] opacity-30">· {getTimeRemaining(message.expires_at)}</span>
+                        <div className="flex items-center justify-end gap-2 mt-1">
+                          <span className="text-[10px] opacity-50">{formatTime(message.created_at)}</span>
+                          <span className="text-[10px] opacity-30">· {getTimeRemaining(message.expires_at)}</span>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
-          )}
+                );
+              })
+            )}
 
-          <div ref={messagesEndRef} />
-        </div>
+            <div ref={messagesEndRef} />
+          </div>
 
-        {/* Input Area */}
-        <div className="border-t border-border bg-card px-4 py-3 safe-area-bottom">
-          <div className="flex items-center gap-2">
-            <Input
-              value={newMessage}
-              onChange={(e) => setNewMessage(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
-              placeholder="Escribe un mensaje..."
-              className="flex-1 input-masonic"
-              disabled={isSending}
-            />
+          {/* Input Area */}
+          <div className="border-t border-white/10 bg-navy/80 px-4 py-3 safe-area-bottom">
+            <div className="flex items-center gap-2">
+              <Input
+                value={newMessage}
+                onChange={(e) => setNewMessage(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && handleSendMessage()}
+                placeholder="Escribe un mensaje..."
+                className="flex-1 input-masonic"
+                disabled={isSending}
+              />
 
-            <Button
-              variant="masonic-dark"
-              size="icon"
-              onClick={() => toast.info("Mensajes de voz: lo activamos luego")}
-            >
-              <Mic size={20} />
-            </Button>
+              <Button
+                variant="masonic-dark"
+                size="icon"
+                onClick={() => toast.info("Mensajes de voz: lo activamos luego")}
+              >
+                <Mic size={20} />
+              </Button>
 
-            <Button
-              variant="masonic"
-              size="icon"
-              onClick={handleSendMessage}
-              disabled={!newMessage.trim() || isSending}
-            >
-              {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
-            </Button>
+              <Button
+                variant="masonic"
+                size="icon"
+                onClick={handleSendMessage}
+                disabled={!newMessage.trim() || isSending}
+              >
+                {isSending ? <Loader2 size={20} className="animate-spin" /> : <Send size={20} />}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
+      <UserProfileModal userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
     </AppLayout>
   );
 }

@@ -41,7 +41,7 @@ interface AuthContextType {
   isVerified: boolean;
   isAdmin: boolean;
   isCeo: boolean;
-  signUp: (email: string, password: string, metadata: Record<string, string>) => Promise<{ error: Error | null }>;
+  signUp: (email: string, password: string, metadata: Record<string, string>) => Promise<{ error: Error | null; data: any }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -143,18 +143,18 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
   const signUp = async (email: string, password: string, metadata: Record<string, string>) => {
     try {
-      const { error } = await supabase.auth.signUp({
+      const { data, error } = await supabase.auth.signUp({
         email,
         password,
-        options: { 
-        data: metadata,
-        emailRedirectTo: "https://fraterna-app.pages.dev/email-verified",
+        options: {
+          data: metadata,
+          emailRedirectTo: "https://fraterna-app.pages.dev/email-verified",
 
-          },
+        },
       });
-      return { error: error as Error | null };
+      return { error: error as Error | null, data };
     } catch (error) {
-      return { error: error as Error };
+      return { error: error as Error, data: null };
     }
   };
 
