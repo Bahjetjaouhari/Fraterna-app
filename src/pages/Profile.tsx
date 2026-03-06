@@ -646,7 +646,7 @@ export const Profile: React.FC = () => {
                 className="space-y-3"
               >
                 <p className="text-sm font-medium">Radio de proximidad</p>
-                <div className="grid grid-cols-4 gap-2">
+                <div className="flex flex-wrap gap-2">
                   {proximityOptions.map((option) => (
                     <button
                       key={option.value}
@@ -654,7 +654,7 @@ export const Profile: React.FC = () => {
                         setProximityRadius(option.value);
                         updateProfileValue("proximity_radius_km", option.value);
                       }}
-                      className={`py-2 px-3 rounded-lg text-sm font-medium transition-all ${proximityRadius === option.value
+                      className={`flex-1 min-w-[80px] whitespace-nowrap py-2 px-3 rounded-lg text-sm font-medium transition-all ${proximityRadius === option.value
                         ? "bg-primary text-primary-foreground"
                         : "bg-muted text-muted-foreground hover:bg-muted/80"
                         }`}

@@ -184,7 +184,7 @@ export const Register: React.FC = () => {
 
         {/* Name */}
         <div className="space-y-2 pt-4">
-          <Label htmlFor="fullName" className="flex items-center gap-2 text-foreground">
+          <Label htmlFor="fullName" className="flex items-center gap-2 text-ivory font-medium">
             <User size={16} className="text-gold" />
             Nombre completo *
           </Label>
@@ -201,7 +201,7 @@ export const Register: React.FC = () => {
 
         {/* Email */}
         <div className="space-y-2">
-          <Label htmlFor="email" className="flex items-center gap-2 text-foreground">
+          <Label htmlFor="email" className="flex items-center gap-2 text-ivory font-medium">
             <Mail size={16} className="text-gold" />
             Correo electrónico *
           </Label>
@@ -219,7 +219,7 @@ export const Register: React.FC = () => {
 
         {/* Password */}
         <div className="space-y-2">
-          <Label htmlFor="password" className="flex items-center gap-2 text-foreground">
+          <Label htmlFor="password" className="flex items-center gap-2 text-ivory font-medium">
             <Eye size={16} className="text-gold" />
             Contraseña *
           </Label>
@@ -246,7 +246,7 @@ export const Register: React.FC = () => {
 
         {/* Phone */}
         <div className="space-y-2">
-          <Label htmlFor="phone" className="flex items-center gap-2 text-foreground">
+          <Label htmlFor="phone" className="flex items-center gap-2 text-ivory font-medium">
             <Phone size={16} className="text-gold" />
             Teléfono *
           </Label>
@@ -265,7 +265,7 @@ export const Register: React.FC = () => {
         {/* Country & City */}
         <div className="grid grid-cols-2 gap-4">
           <div className="space-y-2">
-            <Label htmlFor="country" className="flex items-center gap-2 text-foreground">
+            <Label htmlFor="country" className="flex items-center gap-2 text-ivory font-medium">
               <MapPin size={16} className="text-gold" />
               País *
             </Label>
@@ -280,7 +280,7 @@ export const Register: React.FC = () => {
             />
           </div>
           <div className="space-y-2">
-            <Label htmlFor="city" className="text-foreground">Ciudad *</Label>
+            <Label htmlFor="city" className="text-ivory font-medium">Ciudad *</Label>
             <Input
               id="city"
               name="city"
@@ -295,7 +295,7 @@ export const Register: React.FC = () => {
 
         {/* Lodge */}
         <div className="space-y-2">
-          <Label htmlFor="lodge" className="flex items-center gap-2 text-foreground">
+          <Label htmlFor="lodge" className="flex items-center gap-2 text-ivory font-medium">
             <Building2 size={16} className="text-gold" />
             Logia *
           </Label>
