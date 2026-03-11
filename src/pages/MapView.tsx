@@ -47,6 +47,7 @@ interface BrotherLocation {
     tracking_enabled?: boolean;
     location_visibility_mode?: "public" | "friends" | "friends_selected";
     photo_url?: string;
+    last_seen_at?: string | null;
   };
 }
 
@@ -248,6 +249,7 @@ export const MapView: React.FC = () => {
   }, [brothers]);
 
   // ✅ NUEVO (mínimo): QH cerca REAL (distancia + radio + tu ubicación)
+  // Solo cuenta QH ACTIVOS (last_seen_at dentro de 5 min) — los inactivos (rojo) no cuentan
   const nearbyBrothersCount = useMemo(() => {
     // Si no hay perfil o no hay ubicación actual, no podemos calcular cercanía real
     if (!profile) return 0;
@@ -257,10 +259,21 @@ export const MapView: React.FC = () => {
     const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
     if (radiusKm === 0) return 0;
 
+    const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+    const nowMs = Date.now();
+
     let count = 0;
     for (const b of brothers) {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue; // doble seguro
+
+      // Solo contar QH activos (verde) — ignorar inactivos (rojo)
+      const lastSeen = b.profile?.last_seen_at;
+      const isActive = lastSeen
+        ? (nowMs - new Date(lastSeen).getTime()) < ACTIVE_THRESHOLD_MS
+        : false;
+      if (!isActive) continue;
+
       const dist = haversineDistance(myLat, myLng, b.lat, b.lng);
       if (dist <= radiusKm) count++;
     }
@@ -440,7 +453,8 @@ export const MapView: React.FC = () => {
              stealth_mode,
              tracking_enabled,
              location_visibility_mode,
-             photo_url
+             photo_url,
+             last_seen_at
            )`
         )
         .neq("user_id", user.id);
@@ -490,11 +504,17 @@ export const MapView: React.FC = () => {
     variant: "me" | "bro",
     photoUrl?: string,
     name?: string,
-    isNearby?: boolean
+    isNearby?: boolean,
+    isActive?: boolean
   ) => {
     const isMe = variant === "me";
     const size = isMe ? 48 : 42;
     const photoSize = isMe ? 32 : 28;
+
+    // Status colors
+    const activeColor = "#00ff88"; // verde fosforescente
+    const inactiveColor = "#ff4444"; // rojo
+    const statusColor = isMe ? "#d4af37" : (isActive ? activeColor : inactiveColor);
 
     // Container - NO usar transform/transition aquí (MapLibre lo usa internamente)
     const container = document.createElement("div");
@@ -514,24 +534,26 @@ export const MapView: React.FC = () => {
     badge.style.background = isMe
       ? "linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%)"
       : "linear-gradient(135deg, #1a1a2e 0%, #16213e 100%)";
-    badge.style.border = isMe ? "2.5px solid #d4af37" : "2px solid rgba(212,175,55,0.35)";
+    badge.style.border = isMe
+      ? "2.5px solid #d4af37"
+      : `2.5px solid ${statusColor}`;
     badge.style.display = "flex";
     badge.style.alignItems = "center";
     badge.style.justifyContent = "center";
     badge.style.position = "relative";
-    badge.style.boxShadow = isMe
-      ? "0 2px 12px rgba(212,175,55,0.4), 0 0 0 3px rgba(212,175,55,0.15)"
-      : "0 2px 8px rgba(0,0,0,0.4)";
 
-    // Proximity glow
-    if (isNearby && !isMe) {
-      badge.style.boxShadow = "0 0 0 4px rgba(212,175,55,0.3), 0 0 16px rgba(212,175,55,0.5)";
-      badge.style.animation = "marker-glow 2s ease-in-out infinite";
-    }
-
-    // Pulse animation for own marker
+    // Box shadow based on status
     if (isMe) {
+      badge.style.boxShadow = "0 2px 12px rgba(212,175,55,0.4), 0 0 0 3px rgba(212,175,55,0.15)";
       badge.style.animation = "marker-pulse 3s ease-in-out infinite";
+    } else if (isNearby) {
+      badge.style.boxShadow = `0 0 0 4px ${statusColor}44, 0 0 16px ${statusColor}66`;
+      badge.style.animation = isActive ? "marker-active-glow 2s ease-in-out infinite" : "none";
+    } else if (isActive) {
+      badge.style.boxShadow = `0 0 8px ${activeColor}55, 0 0 0 2px ${activeColor}33`;
+      badge.style.animation = "marker-active-glow 2.5s ease-in-out infinite";
+    } else {
+      badge.style.boxShadow = "0 2px 8px rgba(0,0,0,0.4)";
     }
 
     // Photo circle
@@ -540,9 +562,16 @@ export const MapView: React.FC = () => {
     photoCircle.style.height = `${photoSize}px`;
     photoCircle.style.borderRadius = "50%";
     photoCircle.style.overflow = "hidden";
-    photoCircle.style.border = isMe ? "2px solid #d4af37" : "1.5px solid rgba(212,175,55,0.5)";
+    photoCircle.style.border = isMe
+      ? "2px solid #d4af37"
+      : `1.5px solid ${statusColor}88`;
     photoCircle.style.position = "relative";
     photoCircle.style.zIndex = "2";
+
+    // Inactive: slight opacity to visually distinguish
+    if (!isMe && !isActive) {
+      badge.style.opacity = "0.7";
+    }
 
     if (photoUrl) {
       const img = document.createElement("img");
@@ -585,7 +614,7 @@ export const MapView: React.FC = () => {
     const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
     path.setAttribute("d", "M2,0 L12,7 L22,0");
     path.setAttribute("fill", "none");
-    path.setAttribute("stroke", isMe ? "#d4af37" : "rgba(212,175,55,0.4)");
+    path.setAttribute("stroke", isMe ? "#d4af37" : `${statusColor}66`);
     path.setAttribute("stroke-width", isMe ? "1.5" : "1");
     path.setAttribute("stroke-linecap", "round");
     path.setAttribute("stroke-linejoin", "round");
@@ -600,7 +629,7 @@ export const MapView: React.FC = () => {
     pointer.style.height = "0";
     pointer.style.borderLeft = "5px solid transparent";
     pointer.style.borderRight = "5px solid transparent";
-    pointer.style.borderTop = isMe ? "6px solid #d4af37" : "6px solid rgba(212,175,55,0.35)";
+    pointer.style.borderTop = isMe ? "6px solid #d4af37" : `6px solid ${statusColor}88`;
     pointer.style.marginTop = "-1px";
     container.appendChild(pointer);
 
@@ -625,6 +654,10 @@ export const MapView: React.FC = () => {
       @keyframes marker-glow {
         0%, 100% { box-shadow: 0 0 0 4px rgba(212,175,55,0.3), 0 0 16px rgba(212,175,55,0.5); }
         50% { box-shadow: 0 0 0 6px rgba(212,175,55,0.5), 0 0 24px rgba(212,175,55,0.7); }
+      }
+      @keyframes marker-active-glow {
+        0%, 100% { box-shadow: 0 0 8px rgba(0,255,136,0.35), 0 0 0 2px rgba(0,255,136,0.2); }
+        50% { box-shadow: 0 0 14px rgba(0,255,136,0.5), 0 0 0 4px rgba(0,255,136,0.3); }
       }
     `;
     document.head.appendChild(style);
@@ -652,6 +685,9 @@ export const MapView: React.FC = () => {
     // -- Brother markers --
     const nextIds = new Set<string>();
 
+    const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
+    const nowMs = Date.now();
+
     for (const b of brothers) {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue;
@@ -666,11 +702,17 @@ export const MapView: React.FC = () => {
         isNearby = distKm < 1;
       }
 
-      // Remove old marker to update photo/proximity state
+      // Determine active status: active if last_seen_at is within 5 minutes
+      const lastSeen = b.profile?.last_seen_at;
+      const isActive = lastSeen
+        ? (nowMs - new Date(lastSeen).getTime()) < ACTIVE_THRESHOLD_MS
+        : false;
+
+      // Remove old marker to update photo/proximity/status state
       const existing = brotherMarkersByIdRef.current[b.user_id];
       if (existing) existing.remove();
 
-      const el = makeMarkerEl("bro", b.profile?.photo_url, b.profile?.full_name, isNearby);
+      const el = makeMarkerEl("bro", b.profile?.photo_url, b.profile?.full_name, isNearby, isActive);
       el.style.zIndex = isNearby ? "100" : "10";
       el.addEventListener("click", (e) => {
         e.stopPropagation();
@@ -764,10 +806,10 @@ export const MapView: React.FC = () => {
             toast.error("No se pudo obtener tu ubicación. Activa los servicios de ubicación de Windows.");
             setIsUpdatingLocation(false);
           },
-          { enableHighAccuracy: false, timeout: 20000, maximumAge: 300000 }
+          { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
         );
       },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 }
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }
     );
   };
 
@@ -789,7 +831,7 @@ export const MapView: React.FC = () => {
 
     const interval = setInterval(() => {
       if (!isUpdatingLocation) updateMyLocation({ center: false });
-    }, 30000);
+    }, 15000);
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps

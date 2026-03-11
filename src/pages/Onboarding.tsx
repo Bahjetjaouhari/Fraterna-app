@@ -155,12 +155,19 @@ export const Onboarding: React.FC = () => {
           <ChevronRight size={20} />
         </Button>
 
-        {currentStep > 0 && (
+        {currentStep > 0 ? (
           <button
             onClick={() => setCurrentStep(currentStep - 1)}
             className="w-full text-ivory/50 hover:text-ivory mt-4 py-2 transition-colors"
           >
             Volver
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate("/login")}
+            className="w-full text-ivory/40 hover:text-ivory/70 mt-4 py-2 text-sm transition-colors"
+          >
+            Ya tengo cuenta
           </button>
         )}
       </div>

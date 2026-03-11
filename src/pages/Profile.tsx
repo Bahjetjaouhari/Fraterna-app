@@ -17,6 +17,7 @@ import {
   Save,
   Phone,
   Camera,
+  Crown,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -31,7 +32,8 @@ const proximityOptions = [
   { value: 1, label: "1 km" },
   { value: 5, label: "5 km" },
   { value: 10, label: "10 km" },
-  { value: 0, label: "Desactivado" },
+  { value: 15, label: "15 km" },
+  { value: 25, label: "25 km" },
 ];
 
 export const Profile: React.FC = () => {
@@ -336,10 +338,19 @@ export const Profile: React.FC = () => {
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <h1 className="font-display text-xl text-ivory">{profile.full_name}</h1>
+              </div>
+              <div className="flex items-center gap-1.5 mt-1">
                 {profile.is_verified && (
-                  <div className="w-5 h-5 rounded-full bg-success flex items-center justify-center">
-                    <Check size={12} className="text-white" />
-                  </div>
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 text-success text-[10px] font-semibold">
+                    <Check size={10} />
+                    Verificado
+                  </span>
+                )}
+                {isAdmin && (
+                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gold/20 text-gold text-[10px] font-semibold">
+                    <Crown size={10} />
+                    Admin
+                  </span>
                 )}
               </div>
               <p className="text-ivory/60 text-sm">{profile.email}</p>
@@ -436,7 +447,7 @@ export const Profile: React.FC = () => {
                     <span className="text-muted-foreground">Logia</span>
                     <span className="flex items-center gap-2">
                       <Building2 size={16} className="text-gold" />
-                      {profile.lodge || <span className="text-ivory/40 italic">Sin logia</span>}
+                      {profile.lodge || <span className="text-ivory/60 italic">Sin logia</span>}
                     </span>
                   </div>
                   <div className="flex items-center justify-between py-2 border-b border-border">

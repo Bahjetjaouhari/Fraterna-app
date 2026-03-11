@@ -18,6 +18,7 @@ import {
   CheckCircle2,
   XCircle,
   Loader2,
+  Trash2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -229,6 +230,46 @@ export const AdminPanel: React.FC = () => {
       console.error(e);
       const msg = e instanceof Error ? e.message : "No se pudo cambiar el rol (Edge Function)";
       toast.error(msg, { id: "admin-role" });
+    }
+  };
+
+  const deleteUser = async (targetUserId: string, userName: string) => {
+    if (!isAdmin) return;
+
+    if (isProtectedUser(targetUserId)) {
+      toast.error("Este usuario está protegido y no puede ser eliminado.");
+      return;
+    }
+
+    const ok1 = confirm(
+      `⚠️ ¿Estás SEGURO de ELIMINAR PERMANENTEMENTE a "${userName}"?\n\nEsta acción eliminará:\n- Perfil\n- Mensajes\n- Ubicación\n- Reportes\n- Cuenta de autenticación\n\n¡NO SE PUEDE DESHACER!`
+    );
+    if (!ok1) return;
+
+    const ok2 = confirm(
+      `🔴 ÚLTIMA CONFIRMACIÓN\n\n¿Realmente quieres borrar a "${userName}" para siempre?`
+    );
+    if (!ok2) return;
+
+    try {
+      toast.loading("Eliminando usuario...", { id: "delete-user" });
+
+      // @ts-ignore — admin_delete_user is new; types not yet regenerated
+      const { error } = await supabase.rpc("admin_delete_user", {
+        target_user_id: targetUserId,
+      });
+
+      if (error) throw error;
+
+      toast.success(`Usuario "${userName}" eliminado permanentemente`, {
+        id: "delete-user",
+      });
+
+      await loadUsers({ silent: true });
+    } catch (e) {
+      console.error(e);
+      const msg = e instanceof Error ? e.message : "No se pudo eliminar el usuario";
+      toast.error(msg, { id: "delete-user" });
     }
   };
 
@@ -561,6 +602,17 @@ export const AdminPanel: React.FC = () => {
                                   Quitar admin
                                 </Button>
                               )}
+
+                              {/* Delete user */}
+                              <Button
+                                variant="destructive"
+                                onClick={() => deleteUser(u.id, u.full_name || "Sin nombre")}
+                                disabled={protectedUser}
+                                className="bg-red-900 hover:bg-red-800"
+                              >
+                                <Trash2 size={16} className="mr-2" />
+                                Eliminar
+                              </Button>
                             </div>
                           </div>
                         );

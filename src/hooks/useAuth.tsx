@@ -168,6 +168,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    // Mark user as inactive before closing session
+    if (user?.id) {
+      await supabase.from('profiles').update({ last_seen_at: null }).eq('id', user.id);
+    }
     await supabase.auth.signOut();
     setProfile(null);
     setRoles([]);

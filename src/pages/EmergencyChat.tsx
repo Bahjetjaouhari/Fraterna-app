@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, AlertTriangle, Clock, Loader2 } from "lucide-react";
+import { Send, AlertTriangle, Clock, Loader2, Users } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -45,6 +45,7 @@ const EmergencyChat = () => {
   const [isSending, setIsSending] = useState(false);
   const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [activeUsersCount, setActiveUsersCount] = useState(0);
 
   const fetchProfilesForMessages = async (list: EmergencyMessage[]) => {
     const ids = Array.from(new Set(list.map((m) => m.user_id))).filter(Boolean);
@@ -58,10 +59,16 @@ const EmergencyChat = () => {
   };
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
-  // Ciudad del usuario actual (del perfil)
+  // Ciudad del usuario actual (del perfil) — normalizada para matching preciso
   const myCity = useMemo(() => {
-    return (profile as any)?.city?.trim() || null;
+    const raw = (profile as any)?.city?.trim() || null;
+    return raw;
   }, [profile]);
+
+  // Normalized city for case-insensitive comparison
+  const myCityNormalized = useMemo(() => {
+    return myCity ? myCity.toLowerCase() : null;
+  }, [myCity]);
 
   const fetchMessages = async () => {
     // Traer solo mensajes no expirados
@@ -72,9 +79,9 @@ const EmergencyChat = () => {
       .order("created_at", { ascending: true })
       .limit(100);
 
-    // Filtrar por ciudad si el usuario tiene ciudad
+    // Filtrar por ciudad de forma case-insensitive si el usuario tiene ciudad
     if (myCity) {
-      query.eq("city", myCity);
+      query.ilike("city", myCity);
     }
 
     const { data, error } = await query;
@@ -91,9 +98,28 @@ const EmergencyChat = () => {
     setLoading(false);
   };
 
+  // Count active users in same city
+  const fetchActiveUsers = async () => {
+    if (!myCity) {
+      setActiveUsersCount(0);
+      return;
+    }
+    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+    const { count, error } = await supabase
+      .from("profiles")
+      .select("id", { count: "exact", head: true })
+      .ilike("city", myCity)
+      .gt("last_seen_at", fiveMinAgo);
+    if (!error && count != null) setActiveUsersCount(count);
+  };
+
   useEffect(() => {
     if (!profile) return;
     fetchMessages();
+    fetchActiveUsers();
+
+    // Refresh active count every 30 seconds
+    const interval = setInterval(fetchActiveUsers, 30000);
 
     const channel = supabase
       .channel("emergency-messages-realtime")
@@ -102,8 +128,9 @@ const EmergencyChat = () => {
         { event: "INSERT", schema: "public", table: "emergency_messages" },
         (payload) => {
           const newMsg = payload.new as EmergencyMessage;
-          // Solo agregar si es de mi ciudad (o si no tengo ciudad)
-          if (!myCity || newMsg.city === myCity) {
+          // Solo agregar si es de mi ciudad (case-insensitive) o si no tengo ciudad
+          const msgCityNorm = newMsg.city?.toLowerCase() || null;
+          if (!myCityNormalized || msgCityNorm === myCityNormalized) {
             setMessages((prev) => {
               if (prev.some((m) => m.id === newMsg.id)) return prev;
               return [...prev, newMsg];
@@ -121,9 +148,10 @@ const EmergencyChat = () => {
 
     return () => {
       supabase.removeChannel(channel);
+      clearInterval(interval);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile, myCity]);
+  }, [profile, myCity, myCityNormalized]);
 
   // Auto-scroll al último mensaje
   useEffect(() => {
@@ -197,9 +225,16 @@ const EmergencyChat = () => {
                   </p>
                 </div>
               </div>
-              <div className="flex items-center gap-2 text-ivory/50 text-xs">
-                <Clock size={14} />
-                <span>24h</span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 text-xs bg-green-900/30 text-green-400 border border-green-700/30 rounded-full px-2.5 py-1">
+                  <Users size={12} />
+                  <span className="font-semibold">{activeUsersCount}</span>
+                  <span className="hidden sm:inline">activos</span>
+                </div>
+                <div className="flex items-center gap-1 text-ivory/50 text-xs">
+                  <Clock size={14} />
+                  <span>24h</span>
+                </div>
               </div>
             </div>
           </div>

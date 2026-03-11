@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Send, Mic, Clock, AlertCircle, Loader2 } from "lucide-react";
+import { Send, Mic, Clock, AlertCircle, Loader2, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -72,6 +72,7 @@ export default function Chat() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [activeUsersCount, setActiveUsersCount] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
@@ -143,6 +144,23 @@ export default function Chat() {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Active users count (global — all users active within last 5 min)
+  useEffect(() => {
+    const fetchActiveUsers = async () => {
+      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
+      const { count, error } = await supabase
+        .from("profiles")
+        .select("id", { count: "exact", head: true })
+        .gte("last_seen_at", fiveMinAgo);
+
+      if (!error && count !== null) setActiveUsersCount(count);
+    };
+
+    fetchActiveUsers();
+    const interval = setInterval(fetchActiveUsers, 30000);
+    return () => clearInterval(interval);
   }, []);
 
   useEffect(() => {
@@ -220,9 +238,15 @@ export default function Chat() {
                 </div>
               </div>
 
-              <div className="flex items-center gap-2 text-ivory/60 text-xs">
-                <Clock size={14} />
-                <span>Auto-borrado: 24h</span>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 text-ivory/60 text-xs">
+                  <Clock size={14} />
+                  <span>24h</span>
+                </div>
+                <div className="flex items-center gap-1.5 bg-success/15 px-2 py-1 rounded-full">
+                  <Users size={12} className="text-success" />
+                  <span className="text-success text-xs font-semibold">{activeUsersCount}</span>
+                </div>
               </div>
             </div>
           </div>

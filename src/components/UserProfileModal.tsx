@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from "react";
-import { X, Building2, MapPin, Phone, Shield, Mail, Loader2, Flag } from "lucide-react";
+import { X, Building2, MapPin, Phone, Shield, Mail, Loader2, Flag, Crown } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { toast } from "sonner";
@@ -33,6 +33,7 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ userId, onCl
     const [reportReason, setReportReason] = useState<ReportReason>("spam");
     const [reportDetails, setReportDetails] = useState("");
     const [sending, setSending] = useState(false);
+    const [isProfileAdmin, setIsProfileAdmin] = useState(false);
 
     useEffect(() => {
         if (!userId) return;
@@ -50,6 +51,27 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ userId, onCl
 
             if (error) console.error("Error fetching user profile:", error);
             setProfile(data as PublicProfile | null);
+
+            // Check if this user is admin
+            const { data: adminData } = await supabase
+                .from("admin_users")
+                .select("user_id")
+                .eq("user_id", userId)
+                .maybeSingle();
+            
+            if (!adminData) {
+                // Also check user_roles for admin/ceo
+                const { data: roleData } = await supabase
+                    .from("user_roles")
+                    .select("role")
+                    .eq("user_id", userId)
+                    .in("role", ["admin", "ceo"])
+                    .maybeSingle();
+                setIsProfileAdmin(!!roleData);
+            } else {
+                setIsProfileAdmin(true);
+            }
+
             setLoading(false);
         })();
     }, [userId]);
@@ -138,14 +160,23 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ userId, onCl
                                 </div>
                             )}
 
-                            <h2 className="font-display text-lg text-ivory mt-3 text-center flex items-center gap-2">
+                            <h2 className="font-display text-lg text-ivory mt-3 text-center flex items-center justify-center gap-2 flex-wrap">
                                 {profile.full_name || "Sin nombre"}
+                            </h2>
+                            <div className="flex items-center justify-center gap-1.5 mt-1.5">
                                 {profile.is_verified && (
-                                    <span className="inline-flex w-5 h-5 rounded-full bg-success items-center justify-center">
-                                        <Shield size={10} className="text-white" />
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-success/20 text-success text-[10px] font-semibold">
+                                        <Shield size={10} />
+                                        Verificado
                                     </span>
                                 )}
-                            </h2>
+                                {isProfileAdmin && (
+                                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-gold/20 text-gold text-[10px] font-semibold">
+                                        <Crown size={10} />
+                                        Admin
+                                    </span>
+                                )}
+                            </div>
 
                             {profile.email && (
                                 <p className="text-ivory/50 text-xs mt-0.5">{profile.email}</p>

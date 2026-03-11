@@ -23,6 +23,7 @@ const EmergencyChat = lazy(() => import("./pages/EmergencyChat"));
 const Profile = lazy(() => import("./pages/Profile"));
 const Friends = lazy(() => import("./pages/Friends"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
+const EmailVerified = lazy(() => import("./pages/EmailVerified"));
 
 const queryClient = new QueryClient();
 
@@ -51,6 +52,7 @@ const App = () => (
                 <Route path="/register" element={<Register />} />
                 <Route path="/login" element={<Login />} />
                 <Route path="/verification" element={<Verification />} />
+                <Route path="/email-verified" element={<EmailVerified />} />
 
                 {/* Main App - Protected */}
                 <Route
