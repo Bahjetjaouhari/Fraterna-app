@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Fraterna</string>
+    <string name="title_activity_main">Fraterna</string>
+    <string name="package_name">app.fraterna.beta</string>
+    <string name="custom_url_scheme">app.fraterna.beta</string>
+</resources>

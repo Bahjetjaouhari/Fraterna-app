@@ -5,7 +5,7 @@ import { useAuth } from './useAuth';
 interface VerificationAttempt {
   id: string;
   user_id: string;
-  attempt_count: number;
+  attempts: number;
   locked_until: string | null;
   last_attempt_at: string | null;
 }
@@ -48,24 +48,46 @@ export const useVerification = () => {
       return lockTime > new Date();
     }
     
-    return attempts.attempt_count >= maxAttempts;
+    return attempts.attempts >= maxAttempts;
   };
 
   const getRemainingAttempts = () => {
     if (!attempts) return maxAttempts;
-    return Math.max(0, maxAttempts - attempts.attempt_count);
+    return Math.max(0, maxAttempts - attempts.attempts);
+  };
+
+  const createVerificationReport = async (details?: string) => {
+    if (!user) return;
+
+    try {
+      const { error } = await supabase
+        .from('user_reports')
+        .insert({
+          reporter_id: user.id,
+          reported_user_id: user.id,
+          reason: 'verification_failed' as any,
+          details: details || 'Usuario falló la verificación masónica 3 veces. Requiere revisión manual del administrador.',
+          status: 'pending',
+        });
+
+      if (error) {
+        console.error('Error creating verification report:', error);
+      }
+    } catch (e) {
+      console.error('Error in createVerificationReport:', e);
+    }
   };
 
   const recordFailedAttempt = async () => {
     if (!user || !attempts) return false;
 
-    const newAttemptCount = attempts.attempt_count + 1;
+    const newAttemptCount = attempts.attempts + 1;
     const shouldBlock = newAttemptCount >= maxAttempts;
 
     const { error } = await supabase
       .from('verification_attempts')
       .update({
-        attempt_count: newAttemptCount,
+        attempts: newAttemptCount,
         last_attempt_at: new Date().toISOString(),
         locked_until: shouldBlock 
           ? new Date(Date.now() + 365 * 24 * 60 * 60 * 1000).toISOString() // Lock for 1 year (until manual review)
@@ -78,12 +100,15 @@ export const useVerification = () => {
       return false;
     }
 
-    // Update profile to manual_review if blocked
+    // Update profile to manual_review if blocked + create report
     if (shouldBlock) {
       await supabase
         .from('profiles')
         .update({ verification_status: 'manual_review' })
         .eq('id', user.id);
+
+      // Auto-create report for admin
+      await createVerificationReport();
     }
 
     await fetchAttempts();
@@ -117,6 +142,7 @@ export const useVerification = () => {
     remainingAttempts: getRemainingAttempts(),
     recordFailedAttempt,
     recordSuccessfulVerification,
+    createVerificationReport,
     fetchAttempts,
   };
 };

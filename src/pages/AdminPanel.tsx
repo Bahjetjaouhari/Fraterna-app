@@ -671,6 +671,7 @@ export const AdminPanel: React.FC = () => {
                         const reasonLabels: Record<string, string> = {
                           spam: "Spam",
                           inappropriate: "Comportamiento Inadecuado",
+                          verification_failed: "Verificación Fallida",
                           other: "Otro",
                         };
                         const statusStyles: Record<string, string> = {

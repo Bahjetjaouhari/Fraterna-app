@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
-import { Shield, AlertTriangle, Check, X, Lock, Loader2 } from "lucide-react";
+import { Shield, AlertTriangle, Check, X, Lock, Loader2, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { toast } from "sonner";
@@ -66,6 +66,7 @@ export const Verification: React.FC = () => {
     remainingAttempts, 
     recordFailedAttempt, 
     recordSuccessfulVerification,
+    createVerificationReport,
     isLoading: verificationLoading 
   } = useVerification();
 
@@ -75,6 +76,9 @@ export const Verification: React.FC = () => {
   const [isAnswered, setIsAnswered] = useState(false);
   const [verificationComplete, setVerificationComplete] = useState(false);
   const [localBlocked, setLocalBlocked] = useState(false);
+  const [reportMessage, setReportMessage] = useState("");
+  const [reportSent, setReportSent] = useState(false);
+  const [sendingReport, setSendingReport] = useState(false);
 
   const requiredCorrect = 3; // Mínimo 3 de 4 correctas
   const currentQuestion = verificationQuestions[currentQuestionIndex];
@@ -163,12 +167,26 @@ export const Verification: React.FC = () => {
 
   // Estado bloqueado
   if (isBlocked || localBlocked) {
+    const handleSendReport = async () => {
+      if (!reportMessage.trim()) {
+        toast.error("Escribe un mensaje para el administrador");
+        return;
+      }
+      setSendingReport(true);
+      await createVerificationReport(
+        `Mensaje del usuario: ${reportMessage.trim()}`
+      );
+      setSendingReport(false);
+      setReportSent(true);
+      toast.success("Reporte enviado al administrador");
+    };
+
     return (
       <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-8 text-center">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
-          className="max-w-sm"
+          className="max-w-sm w-full"
         >
           <div className="w-20 h-20 mx-auto mb-6 rounded-full bg-destructive/20 flex items-center justify-center">
             <Lock className="w-10 h-10 text-destructive" />
@@ -176,10 +194,10 @@ export const Verification: React.FC = () => {
           <h1 className="font-display text-2xl text-ivory mb-4">
             Cuenta en Revisión
           </h1>
-          <p className="text-ivory/70 mb-8">
+          <p className="text-ivory/70 mb-6">
             Has excedido los intentos de verificación. Tu solicitud será revisada manualmente por un administrador.
           </p>
-          <div className="p-4 rounded-lg bg-warning/10 border border-warning/30 mb-8">
+          <div className="p-4 rounded-lg bg-warning/10 border border-warning/30 mb-6">
             <div className="flex items-start gap-3">
               <AlertTriangle className="w-5 h-5 text-warning flex-shrink-0 mt-0.5" />
               <p className="text-sm text-ivory/80 text-left">
@@ -187,6 +205,40 @@ export const Verification: React.FC = () => {
               </p>
             </div>
           </div>
+
+          {/* Reportar Problema */}
+          {!reportSent ? (
+            <div className="mb-6 space-y-3">
+              <p className="text-sm text-ivory/60">¿Eres masón y crees que hubo un error? Envía un mensaje al administrador:</p>
+              <textarea
+                className="w-full bg-navy-light border border-navy-light rounded-lg p-3 text-ivory text-sm placeholder:text-ivory/40 resize-none focus:border-gold/50 focus:outline-none"
+                rows={3}
+                maxLength={500}
+                placeholder="Explica tu situación: logia, grado, nombre simbólico..."
+                value={reportMessage}
+                onChange={(e) => setReportMessage(e.target.value)}
+                disabled={sendingReport}
+              />
+              <Button
+                variant="masonic-outline"
+                className="w-full"
+                onClick={handleSendReport}
+                disabled={sendingReport || !reportMessage.trim()}
+              >
+                {sendingReport ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Send className="w-4 h-4 mr-2" />
+                )}
+                Reportar Problema
+              </Button>
+            </div>
+          ) : (
+            <div className="mb-6 p-3 rounded-lg bg-success/10 border border-success/30">
+              <p className="text-sm text-success">✓ Reporte enviado. Un administrador revisará tu caso.</p>
+            </div>
+          )}
+
           <Button
             variant="masonic-outline"
             onClick={() => navigate("/")}

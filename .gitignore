@@ -27,3 +27,12 @@ dist-ssr
 *.pem
 *-key.pem
 
+# Capacitor native builds
+ios/App/Pods/
+ios/DerivedData/
+android/.gradle/
+android/app/build/
+android/build/
+android/local.properties
+*.keystore
+*.jks
