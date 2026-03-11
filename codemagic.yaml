@@ -1,0 +1,32 @@
+workflows:
+  ios-build:
+    name: Fraterna iOS Build
+    max_build_duration: 60
+    instance_type: mac_mini_m2
+    environment:
+      node: 18.19.0
+      xcode: latest
+      cocoapods: default
+    scripts:
+      - name: Install Node dependencies
+        script: |
+          npm ci
+      - name: Build web assets
+        script: |
+          npm run build
+      - name: Sync Capacitor
+        script: |
+          npx cap sync ios
+      - name: Set up code signing (debug)
+        script: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+    artifacts:
+      - ios/App/build/**/*.app
+      - ios/App/build/**/*.ipa
+    publishing:
+      email:
+        recipients:
+          - bahjetjaouhari@gmail.com
+        notify:
+          success: true
+          failure: true
