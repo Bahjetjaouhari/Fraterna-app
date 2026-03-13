@@ -26,7 +26,7 @@ interface Profile {
 }
 
 interface UserRole {
-  id: string;
+  id: number;
   user_id: string;
   role: 'user' | 'admin' | 'ceo';
   created_at: string;
@@ -41,7 +41,7 @@ interface AuthContextType {
   isVerified: boolean;
   isAdmin: boolean;
   isCeo: boolean;
-  signUp: (email: string, password: string, metadata: Record<string, string>) => Promise<{ error: Error | null; data: any }>;
+  signUp: (email: string, password: string, metadata: Record<string, string>) => Promise<{ error: Error | null; data: unknown }>;
   signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -139,6 +139,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
 
     return () => subscription.unsubscribe();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const signUp = async (email: string, password: string, metadata: Record<string, string>) => {
@@ -203,6 +204,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   );
 };
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useAuth = () => {
   const context = useContext(AuthContext);
   if (!context) {

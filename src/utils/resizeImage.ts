@@ -32,7 +32,7 @@ export async function resizeImageForAvatar(
 
             // High-quality step-down scaling to prevent pixelation (aliasing) on large photos
             let canvas = document.createElement("canvas");
-            let ctx = canvas.getContext("2d");
+            const ctx = canvas.getContext("2d");
             if (!ctx) return reject(new Error("No canvas 2D context"));
 
             canvas.width = currentW;

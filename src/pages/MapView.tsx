@@ -82,6 +82,7 @@ const loadViewerRelations = async (viewerId: string) => {
       .eq("status", "accepted");
 
     if (!error && Array.isArray(data)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const row of data as any[]) {
         const r = row.requester_id;
         const a = row.addressee_id;
@@ -97,6 +98,7 @@ const loadViewerRelations = async (viewerId: string) => {
         .eq("status", "accepted");
 
       if (!error2 && Array.isArray(data2)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const row of data2 as any[]) {
           const u = row.user_id;
           const f = row.friend_id;
@@ -119,6 +121,7 @@ const loadViewerRelations = async (viewerId: string) => {
       .eq("viewer_id", viewerId);
 
     if (!error && Array.isArray(data)) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       for (const row of data as any[]) {
         if (typeof row.owner_id === "string") allowlisted.add(row.owner_id);
       }
@@ -130,6 +133,7 @@ const loadViewerRelations = async (viewerId: string) => {
         .eq("allowed_user_id", viewerId);
 
       if (!error2 && Array.isArray(data2)) {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         for (const row of data2 as any[]) {
           if (typeof row.owner_id === "string") allowlisted.add(row.owner_id);
         }
@@ -141,6 +145,7 @@ const loadViewerRelations = async (viewerId: string) => {
           .eq("allowed_user_id", viewerId);
 
         if (!error3 && Array.isArray(data3)) {
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           for (const row of data3 as any[]) {
             if (typeof row.user_id === "string") allowlisted.add(row.user_id);
           }
@@ -255,7 +260,6 @@ export const MapView: React.FC = () => {
     if (!profile) return 0;
     if (myLat == null || myLng == null) return 0;
 
-    // @ts-ignore
     const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
     if (radiusKm === 0) return 0;
 
@@ -293,11 +297,9 @@ export const MapView: React.FC = () => {
   const checkProximityAlerts = (list: BrotherLocation[]) => {
     if (!profile) return;
 
-    // @ts-ignore
     const enabled = profile.proximity_alerts_enabled;
     if (enabled === false) return;
 
-    // @ts-ignore
     const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
     if (radiusKm === 0) return;
     if (myLat == null || myLng == null) return;
@@ -346,7 +348,7 @@ export const MapView: React.FC = () => {
       maxZoom: 18,
       fadeDuration: 0,
       renderWorldCopies: false,
-      attributionControl: true,
+      attributionControl: false,
       dragRotate: false,
       pitchWithRotate: false,
       touchPitch: false,
@@ -468,6 +470,7 @@ export const MapView: React.FC = () => {
 
       // Aplicar privacidad del QH (owner) hacia el viewer (tú)
       const filtered = rawList.filter((b) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = b.profile as any;
 
         // Seguridad: si el otro no quiere trackear o está en stealth => no mostrar
@@ -742,7 +745,6 @@ export const MapView: React.FC = () => {
       myMarkerRef.current?.remove();
       myMarkerRef.current = null;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // -----------------------------
@@ -826,7 +828,7 @@ export const MapView: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
-    // @ts-ignore
+    // @ts-expect-error type allows it
     if (profile?.tracking_enabled === false) return;
 
     const interval = setInterval(() => {
@@ -840,7 +842,7 @@ export const MapView: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
-    // @ts-ignore
+    // @ts-expect-error type allows it
     if (profile?.tracking_enabled === false) return;
 
     const t = setTimeout(() => updateMyLocation({ center: true }), 800);
@@ -874,6 +876,7 @@ export const MapView: React.FC = () => {
         })
         .catch(() => { });
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [myLat, myLng]);
 
   const toggleStealthMode = async () => {

@@ -105,7 +105,9 @@ export const UserProfileModal: React.FC<UserProfileModalProps> = ({ userId, onCl
             setShowReport(false);
             setReportReason("spam");
             setReportDetails("");
-        } catch (e: any) {
+        }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        catch (e: any) {
             console.error("Error sending report:", e);
             toast.error(e?.message || "No se pudo enviar el reporte");
         } finally {

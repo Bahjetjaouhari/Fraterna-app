@@ -98,6 +98,7 @@ export const Profile: React.FC = () => {
 
       await refreshProfile();
       toast.success("Foto actualizada");
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     } catch (err: any) {
       console.error("Photo upload error:", err);
       toast.error("No se pudo subir la foto: " + (err?.message || "error"));
@@ -109,7 +110,7 @@ export const Profile: React.FC = () => {
   };
 
   // Friends allowlist (for 'friends_selected')
-  const [friends, setFriends] = useState<Array<{ id: string; full_name: string | null }>>([]);;
+  const [friends, setFriends] = useState<Array<{ id: string; full_name: string | null }>>([]);
   const [allowedIds, setAllowedIds] = useState<string[]>([]);
   const [isLoadingFriends, setIsLoadingFriends] = useState(false);
 
@@ -133,6 +134,7 @@ export const Profile: React.FC = () => {
 
       if (friendshipsError) throw friendshipsError;
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const friendIds = (friendships || []).map((f: any) =>
         f.requester_id === user.id ? f.addressee_id : f.requester_id
       );
@@ -149,6 +151,7 @@ export const Profile: React.FC = () => {
         .in("id", friendIds);
 
       if (profilesError) throw profilesError;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setFriends((friendProfiles || []) as any);
 
       // ✅ FIX: tu tabla usa viewer_id, no allowed_user_id
@@ -158,6 +161,7 @@ export const Profile: React.FC = () => {
         .eq("owner_id", user.id);
 
       if (allowlistError) throw allowlistError;
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       setAllowedIds((allowlist || []).map((a: any) => a.viewer_id));
     } catch (error) {
       console.error("Error loading friends/allowlist:", error);
@@ -683,6 +687,7 @@ export const Profile: React.FC = () => {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.3 }}
+            className="mb-8"
           >
             <Button
               variant="outline"
@@ -693,6 +698,11 @@ export const Profile: React.FC = () => {
               Cerrar Sesión
             </Button>
           </motion.div>
+
+          <div className="flex justify-center items-center gap-1.5 pb-6 opacity-60">
+            <span className="text-gold text-[10px]">♔</span>
+            <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">Creada por INOVA</p>
+          </div>
         </div>
       </div>
     </AppLayout>

@@ -61,6 +61,7 @@ const EmergencyChat = () => {
 
   // Ciudad del usuario actual (del perfil) — normalizada para matching preciso
   const myCity = useMemo(() => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const raw = (profile as any)?.city?.trim() || null;
     return raw;
   }, [profile]);

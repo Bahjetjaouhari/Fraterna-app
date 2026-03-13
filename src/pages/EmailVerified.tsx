@@ -30,6 +30,7 @@ const EmailVerified = () => {
           // No session but no error — might already be verified
           setStatus("success");
         }
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       } catch (e: any) {
         setErrorMsg(e?.message || "Error inesperado");
         setStatus("error");

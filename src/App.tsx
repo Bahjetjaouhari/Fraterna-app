@@ -7,6 +7,7 @@ import { BrowserRouter, Routes, Route } from "react-router-dom";
 import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
+import { PushNotificationListener } from "@/components/PushNotificationListener";
 
 // Eager: páginas de entrada (carga inicial rápida)
 import Index from "./pages/Index";
@@ -42,6 +43,7 @@ const App = () => (
       <BrowserRouter>
         <AuthProvider>
           <ErrorBoundary>
+            <PushNotificationListener />
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 {/* Splash / Entry */}

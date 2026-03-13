@@ -205,6 +205,7 @@ export default function Chat() {
   };
 
   const getDisplayName = (userId: string, isMe: boolean) => {
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if (isMe) return formatQHName((profile as any)?.full_name ?? "Tú");
     const p = profilesById[userId];
     return formatQHName(p?.full_name ?? null);

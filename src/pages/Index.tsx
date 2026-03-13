@@ -81,7 +81,13 @@ const Index: React.FC = () => {
       </motion.div>
 
       {/* Bottom gradient */}
-      <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-navy-dark to-transparent" />
+      <div className="absolute bottom-0 left-0 right-0 h-48 bg-gradient-to-t from-navy-dark to-transparent pointer-events-none" />
+
+      {/* Attribution */}
+      <div className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-1.5 z-10 opacity-70">
+        <span className="text-gold text-[10px]">♔</span>
+        <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">Creada por INOVA</p>
+      </div>
     </div>
   );
 };

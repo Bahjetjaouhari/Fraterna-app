@@ -104,6 +104,7 @@ export const AdminPanel: React.FC = () => {
    * - Authorization: Bearer <token>
    * - apikey: <anon key>
    */
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const invokeWithAuth = async <TBody extends object, TResp = any>(
     functionName: string,
     body: TBody
@@ -120,11 +121,14 @@ export const AdminPanel: React.FC = () => {
 
     if (error) {
       console.error(`[${functionName}] invoke error:`, error);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       throw new Error(`${functionName}: ${(error as any)?.message ?? "Edge Function error"}`);
     }
 
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     if ((data as any)?.error) {
       console.error(`[${functionName}] response error:`, data);
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       throw new Error(`${functionName}: ${(data as any).error}`);
     }
 
@@ -254,7 +258,7 @@ export const AdminPanel: React.FC = () => {
     try {
       toast.loading("Eliminando usuario...", { id: "delete-user" });
 
-      // @ts-ignore — admin_delete_user is new; types not yet regenerated
+      // @ts-expect-error — admin_delete_user is new; types not yet regenerated
       const { error } = await supabase.rpc("admin_delete_user", {
         target_user_id: targetUserId,
       });
@@ -329,6 +333,7 @@ export const AdminPanel: React.FC = () => {
 
       // Fetch profile names for reporter and reported
       const allIds = new Set<string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (data || []).forEach((r: any) => {
         allIds.add(r.reporter_id);
         allIds.add(r.reported_user_id);
@@ -340,8 +345,10 @@ export const AdminPanel: React.FC = () => {
         .in("id", Array.from(allIds));
 
       const nameMap = new Map<string, string>();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       (profiles || []).forEach((p: any) => nameMap.set(p.id, p.full_name || "Sin nombre"));
 
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const enriched: ReportRow[] = (data || []).map((r: any) => ({
         ...r,
         reporter_name: nameMap.get(r.reporter_id) || "Desconocido",
@@ -432,7 +439,7 @@ export const AdminPanel: React.FC = () => {
               </p>
             </div>
           ) : (
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as any)}>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "users" | "reports" | "chat")}>
               <TabsList className="w-full mb-6">
                 <TabsTrigger value="users" className="flex-1">
                   <Users size={16} className="mr-2" />

@@ -21,6 +21,7 @@ export const useVerification = () => {
     if (user) {
       fetchAttempts();
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   const fetchAttempts = async () => {
@@ -65,6 +66,7 @@ export const useVerification = () => {
         .insert({
           reporter_id: user.id,
           reported_user_id: user.id,
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           reason: 'verification_failed' as any,
           details: details || 'Usuario falló la verificación masónica 3 veces. Requiere revisión manual del administrador.',
           status: 'pending',
