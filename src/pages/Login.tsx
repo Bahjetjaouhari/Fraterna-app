@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Mail, Eye, EyeOff, ChevronRight } from "lucide-react";
+import { Mail, Eye, EyeOff, ChevronRight, AlertTriangle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,6 +16,7 @@ export const Login: React.FC = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [showForceLogin, setShowForceLogin] = useState(false);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -41,10 +42,13 @@ export const Login: React.FC = () => {
     setIsLoading(true);
 
     try {
-      const { error } = await signIn(email, password);
+      const { error } = await signIn(email, password, false);
 
       if (error) {
-        if (error.message.includes('Invalid login')) {
+        if (error.message === 'session_active_elsewhere') {
+          setShowForceLogin(true);
+          toast.error("Sesión activa en otro dispositivo");
+        } else if (error.message.includes('Invalid login')) {
           toast.error("Credenciales incorrectas");
         } else {
           toast.error(error.message || "Error al iniciar sesión");
@@ -56,6 +60,25 @@ export const Login: React.FC = () => {
       // Navigation handled by useEffect
     } catch (error) {
       toast.error("Error al iniciar sesión");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleForceLogin = async () => {
+    setIsLoading(true);
+    setShowForceLogin(false);
+    try {
+      const { error } = await signIn(email, password, true);
+
+      if (error) {
+        toast.error("Error al forzar el inicio de sesión");
+        return;
+      }
+
+      toast.success("Sesión transferida con éxito. Bienvenido.");
+    } catch {
+      toast.error("Error inesperado al transferir sesión");
     } finally {
       setIsLoading(false);
     }
@@ -163,6 +186,34 @@ export const Login: React.FC = () => {
           <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">Creada por INOVA</p>
         </div>
       </div>
+
+      {/* Force Login Modal */}
+      {showForceLogin && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-navy-light border border-gold/20 p-6 rounded-2xl w-full max-w-sm text-center shadow-2xl relative overflow-hidden"
+          >
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-gold to-transparent" />
+            
+            <AlertTriangle size={48} className="text-gold mx-auto mb-4" />
+            <h3 className="text-xl font-display text-ivory mb-2">Sesión Activa Detectada</h3>
+            <p className="text-ivory/70 text-sm mb-6">
+              Tu cuenta está siendo usada actualmente en otro dispositivo. ¿Deseas cerrar la sesión remota y entrar desde aquí?
+            </p>
+            
+            <div className="flex flex-col gap-3">
+              <Button onClick={handleForceLogin} variant="masonic" className="w-full">
+                Sí, forzar entrada aquí
+              </Button>
+              <Button onClick={() => setShowForceLogin(false)} variant="outline" className="w-full border-ivory/20 bg-transparent text-ivory/70 hover:bg-ivory/10 hover:text-ivory">
+                Cancelar
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
     </div>
   );
 };
