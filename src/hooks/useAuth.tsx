@@ -22,7 +22,8 @@ interface Profile {
   last_seen_at: string | null;
   created_at: string;
   updated_at: string;
-  is_active?: boolean; // 👈 IMPORTANTE
+  is_active?: boolean;
+  current_device_id?: string | null;
 }
 
 interface UserRole {
@@ -42,7 +43,7 @@ interface AuthContextType {
   isAdmin: boolean;
   isCeo: boolean;
   signUp: (email: string, password: string, metadata: Record<string, string>) => Promise<{ error: Error | null; data: unknown }>;
-  signIn: (email: string, password: string) => Promise<{ error: Error | null }>;
+  signIn: (email: string, password: string, force?: boolean) => Promise<{ error: Error | null }>;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
 }
@@ -55,6 +56,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [isForcingLogin, setIsForcingLogin] = useState(false);
 
   const forceLogoutBannedUser = async () => {
     await supabase.auth.signOut();
@@ -62,6 +64,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setSession(null);
     setProfile(null);
     setRoles([]);
+  };
+
+  // Get or generate a persistent local device ID for this browser/device
+  const getLocalDeviceId = () => {
+    let deviceId = localStorage.getItem('fraterna_device_id');
+    if (!deviceId) {
+      deviceId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+      localStorage.setItem('fraterna_device_id', deviceId);
+    }
+    return deviceId;
   };
 
   const fetchProfile = async (userId: string) => {
@@ -86,6 +98,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
 
       if (profileData) {
+        // 🔴 CHECK FOR SINGLE DEVICE LOCK
+        const localDeviceId = getLocalDeviceId();
+        // @ts-expect-error missing column in generated types
+        if (profileData.current_device_id && profileData.current_device_id !== localDeviceId && !isForcingLogin) {
+          console.warn('Sesión iniciada en otro dispositivo, cerrando sesión local');
+          await forceLogoutBannedUser();
+          alert('Tu sesión ha sido iniciada en otro dispositivo.');
+          return;
+        }
+
         setProfile(profileData as Profile);
       }
 
@@ -159,11 +181,50 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string, force: boolean = false) => {
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
-      return { error: error as Error | null };
+      if (force) {
+        setIsForcingLogin(true);
+      }
+      
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      
+      if (error) {
+        setIsForcingLogin(false);
+        throw error;
+      }
+      
+      if (data?.user) {
+        // Enforce Single Device Lock
+        const { data: profileCheck } = await supabase
+          .from('profiles')
+          .select('current_device_id')
+          .eq('id', data.user.id)
+          .single();
+          
+        const localDeviceId = getLocalDeviceId();
+        
+        // @ts-expect-error missing column in generated types
+        if (profileCheck?.current_device_id && profileCheck.current_device_id !== localDeviceId && !force) {
+          // Si no está forzando y la cuenta la tiene otro
+          await supabase.auth.signOut();
+          return { error: new Error('session_active_elsewhere') };
+        }
+        
+        // Registrar el nuevo dispositivo
+        // @ts-expect-error missing column in generated types
+        await supabase.from('profiles').update({ current_device_id: localDeviceId }).eq('id', data.user.id);
+        
+        if (force) {
+          // Ya se actualizó en BD, podemos quitar la bandera y recargar
+          setIsForcingLogin(false);
+          await fetchProfile(data.user.id);
+        }
+      }
+
+      return { error: null };
     } catch (error) {
+      setIsForcingLogin(false);
       return { error: error as Error };
     }
   };
@@ -171,7 +232,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => {
     // Mark user as inactive before closing session
     if (user?.id) {
-      await supabase.from('profiles').update({ last_seen_at: null }).eq('id', user.id);
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
+      await supabase.from('profiles').update({ last_seen_at: null, current_device_id: null }).eq('id', user.id);
     }
     await supabase.auth.signOut();
     setProfile(null);

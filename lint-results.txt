@@ -1,0 +1,92 @@
+
+> vite_react_shadcn_ts@0.0.0 lint
+> eslint .
+
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\UserProfileModal.tsx
+  108:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\ui\button.tsx
+  60:18  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\ui\sonner.tsx
+  26:19  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\hooks\useAuth.tsx
+   44:119  error    Unexpected any. Specify a different type                                                                                        @typescript-eslint/no-explicit-any
+  142:6    warning  React Hook useEffect has a missing dependency: 'fetchProfile'. Either include it or remove the dependency array                 react-hooks/exhaustive-deps
+  206:14   warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\hooks\usePushNotifications.ts
+  46:54  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  58:74  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\hooks\useVerification.tsx
+  24:6   warning  React Hook useEffect has a missing dependency: 'fetchAttempts'. Either include it or remove the dependency array  react-hooks/exhaustive-deps
+  68:44  error    Unexpected any. Specify a different type                                                                          @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\AdminPanel.tsx
+  107:63  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  123:53  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  126:18  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  128:52  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  257:7   error  Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  332:32  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  343:36  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  345:58  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  435:77  error  Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\Chat.tsx
+  208:47  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\EmailVerified.tsx
+  33:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\EmergencyChat.tsx
+  64:29  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\Friends.tsx
+  243:53  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  277:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  309:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  330:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  352:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  372:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  387:36  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  392:41  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  393:41  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  450:42  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  503:41  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  534:41  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  566:36  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\MapView.tsx
+   85:33  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  100:36  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  122:33  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  133:36  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  144:38  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  258:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  296:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  300:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  471:32  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  745:5   warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  829:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  843:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  877:6   warning  React Hook useEffect has a missing dependency: 'user.id'. Either include it or remove the dependency array           react-hooks/exhaustive-deps
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\Profile.tsx
+  101:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  136:53  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  152:44  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  161:47  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\utils\resizeImage.ts
+  35:17  error  'ctx' is never reassigned. Use 'const' instead  prefer-const
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\tailwind.config.ts
+  148:13  error  A `require()` style import is forbidden  @typescript-eslint/no-require-imports
+
+Ô£û 54 problems (47 errors, 7 warnings)
+  1 error and 1 warning potentially fixable with the `--fix` option.
+

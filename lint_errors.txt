@@ -1,0 +1,48 @@
+
+> vite_react_shadcn_ts@0.0.0 lint
+> eslint .
+
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\UserProfileModal.tsx
+  108:21  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\ui\button.tsx
+  60:18  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components  react-refresh/only-export-components
+  61:1   warning  Unused eslint-disable directive (no problems were reported from 'react-refresh/only-export-components')
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\components\ui\sonner.tsx
+  26:1  warning  Unused eslint-disable directive (no problems were reported from 'react-refresh/only-export-components')
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\hooks\useAuth.tsx
+   67:9   warning  The 'fetchProfile' function makes the dependencies of useEffect Hook (at line 142) change on every render. To fix this, wrap the definition of 'fetchProfile' in its own useCallback() Hook  react-hooks/exhaustive-deps
+  206:14  warning  Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components                                                               react-refresh/only-export-components
+  213:1   warning  Unused eslint-disable directive (no problems were reported from 'react-refresh/only-export-components')
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\hooks\usePushNotifications.ts
+  44:13  warning  Unused eslint-disable directive (no problems were reported from '@typescript-eslint/no-explicit-any')
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\AdminPanel.tsx
+  261:7    error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  442:61   warning  Unused eslint-disable directive (no problems were reported from '@typescript-eslint/no-explicit-any')
+  442:145  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\Friends.tsx
+  279:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  311:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  332:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  354:19  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+  390:36  error  Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any
+
+C:\Users\Bahje\OneDrive\Desktop\Antigravity Fraterna\Fraterna Lovable\src\pages\MapView.tsx
+  263:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  301:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  305:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  476:32  error    Unexpected any. Specify a different type                                                                             @typescript-eslint/no-explicit-any
+  750:5   warning  Unused eslint-disable directive (no problems were reported from 'react-hooks/exhaustive-deps')
+  834:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  848:5   error    Use "@ts-expect-error" instead of "@ts-ignore", as "@ts-ignore" will do nothing if the following line is error-free  @typescript-eslint/ban-ts-comment
+  882:6   warning  React Hook useEffect has a missing dependency: 'user.id'. Either include it or remove the dependency array           react-hooks/exhaustive-deps
+
+Ô£û 24 problems (14 errors, 10 warnings)
+  0 errors and 6 warnings potentially fixable with the `--fix` option.
+
