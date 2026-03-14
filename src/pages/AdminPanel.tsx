@@ -526,9 +526,9 @@ export const AdminPanel: React.FC = () => {
                         return (
                           <div
                             key={u.id}
-                            className="flex items-center justify-between gap-3 border border-border rounded-xl p-3 bg-background/50"
+                            className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border border-border rounded-xl p-3 bg-background/50"
                           >
-                            <div className="min-w-0">
+                            <div className="min-w-0 w-full sm:w-auto">
                               <div className="flex items-center gap-2 flex-wrap">
                                 <p className="font-medium truncate max-w-[280px]">
                                   {u.full_name?.trim() || "Sin nombre"}
@@ -567,7 +567,7 @@ export const AdminPanel: React.FC = () => {
                               </p>
                             </div>
 
-                            <div className="flex items-center gap-2 shrink-0">
+                            <div className="flex flex-wrap items-center gap-2 mt-2 sm:mt-0 shrink-0 w-full sm:w-auto">
                               {/* Ban / Unban */}
                               {active ? (
                                 <Button

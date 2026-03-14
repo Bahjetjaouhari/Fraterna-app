@@ -127,6 +127,8 @@ const loadViewerRelations = async (viewerId: string) => {
       }
     } else {
       // fallback 1
+      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+      // @ts-ignore
       const { data: data2, error: error2 } = await supabase
         .from("location_allowlist")
         .select("owner_id, allowed_user_id")
@@ -828,7 +830,6 @@ export const MapView: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
-    // @ts-expect-error type allows it
     if (profile?.tracking_enabled === false) return;
 
     const interval = setInterval(() => {
@@ -842,7 +843,6 @@ export const MapView: React.FC = () => {
   useEffect(() => {
     if (!user) return;
     if (stealthMode) return;
-    // @ts-expect-error type allows it
     if (profile?.tracking_enabled === false) return;
 
     const t = setTimeout(() => updateMyLocation({ center: true }), 800);
@@ -944,10 +944,10 @@ export const MapView: React.FC = () => {
 
         {/* TOP CONTROLS */}
         <div
-          className="absolute left-4 right-4 flex justify-between items-start z-20"
+          className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-start z-20"
           style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
         >
-          <div className="glass-dark rounded-lg px-4 py-2 pointer-events-auto">
+          <div className="glass-dark rounded-lg px-3 py-2 pointer-events-auto">
             <p className="text-ivory/60 text-xs">Tu ubicación</p>
             <p className="text-ivory font-medium">
               {geoCity || profile?.city || (myLat != null ? "Obteniendo..." : "Sin ubicación")}, {geoCountry || profile?.country || "Venezuela"}
@@ -967,7 +967,7 @@ export const MapView: React.FC = () => {
 
         {/* SIDE CONTROLS */}
         <div
-          className="absolute right-4 flex flex-col gap-2 z-20"
+          className="absolute right-2 md:right-4 flex flex-col gap-2 z-20"
           style={{ top: "calc(env(safe-area-inset-top, 0px) + 92px)" }}
         >
           <Button variant="masonic-dark" size="icon" onClick={zoomIn} className="pointer-events-auto">
@@ -979,8 +979,8 @@ export const MapView: React.FC = () => {
         </div>
 
         {/* BOTTOM CONTROLS */}
-        <div className="absolute left-4 right-4 flex justify-between items-end z-20" style={{ bottom: bottomOffset }}>
-          <div className="glass-dark rounded-lg px-4 py-3 pointer-events-auto">
+        <div className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-end z-20" style={{ bottom: bottomOffset }}>
+          <div className="glass-dark rounded-lg px-3 py-3 pointer-events-auto">
             <div className="flex items-center gap-2">
               <Users size={18} className="text-gold" />
               <div>

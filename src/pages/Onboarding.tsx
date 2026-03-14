@@ -144,7 +144,7 @@ export const Onboarding: React.FC = () => {
       </div>
 
       {/* Bottom Action */}
-      <div className="px-8 pb-12 safe-area-bottom relative z-10">
+      <div className="px-8 pb-8 safe-area-bottom relative z-10">
         <Button
           variant="masonic"
           size="xl"
@@ -170,16 +170,16 @@ export const Onboarding: React.FC = () => {
             Ya tengo cuenta
           </button>
         )}
+
+        {/* Attribution */}
+        <div className="flex items-center justify-center gap-1.5 mt-8 opacity-70 pointer-events-none">
+          <span className="text-gold text-[10px]">♔</span>
+          <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">Creada por INOVA</p>
+        </div>
       </div>
 
       {/* Decorative Element */}
-      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-navy-dark to-transparent pointer-events-none" />
-
-      {/* Attribution */}
-      <div className="absolute bottom-6 left-0 right-0 flex items-center justify-center gap-1.5 z-10 opacity-70 pointer-events-none">
-        <span className="text-gold text-[10px]">♔</span>
-        <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">Creada por INOVA</p>
-      </div>
+      <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-navy-dark to-transparent pointer-events-none z-0" />
     </div>
   );
 };
