@@ -208,40 +208,37 @@ export const MapView: React.FC = () => {
   const RELATIONS_CACHE_TTL = 60_000; // 60 segundos
 
   // -----------------------------
-  // Bottom nav measure
+  // Prevent Map Marker Drift natively
   // -----------------------------
   useEffect(() => {
-    const el = document.getElementById("bottom-nav");
-    if (!el) return;
+    // Para iOS/Android, prevenir overscroll y rubber-banding en el document
+    const originalOverscroll = document.body.style.overscrollBehavior;
+    const originalOverflow = document.body.style.overflow;
+    
+    document.body.style.overscrollBehavior = "none";
+    document.body.style.overflow = "hidden";
 
-    const measure = () => {
-      const h = Math.round(el.getBoundingClientRect().height || 0);
-      if (h > 0) setBottomNavH(h);
+    // Bloqueador agresivo de scroll nativo para detener el drift de marcadores
+    const disableNativeScroll = (e: TouchEvent) => {
+      const target = e.target as HTMLElement;
+      // Allow scroll only on specific elements if needed
+      if (target.closest('.overflow-y-auto')) return;
+      
+      if (e.cancelable) {
+        e.preventDefault();
+      }
     };
 
-    measure();
-
-    const ro = new ResizeObserver(measure);
-    ro.observe(el);
-
-    window.addEventListener("resize", measure);
-    window.addEventListener("orientationchange", measure);
-
-    const t1 = setTimeout(measure, 200);
-    const t2 = setTimeout(measure, 600);
-    const t3 = setTimeout(measure, 1200);
+    document.addEventListener("touchmove", disableNativeScroll, { passive: false });
 
     return () => {
-      ro.disconnect();
-      window.removeEventListener("resize", measure);
-      window.removeEventListener("orientationchange", measure);
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
+      document.body.style.overscrollBehavior = originalOverscroll;
+      document.body.style.overflow = originalOverflow;
+      document.removeEventListener("touchmove", disableNativeScroll);
     };
   }, []);
 
-  const bottomOffset = `calc(${bottomNavH}px + env(safe-area-inset-bottom, 0px) + 2px)`;
+  const bottomOffset = `calc(var(--bottom-nav-h, 5rem) + env(safe-area-inset-bottom, 0px) + 8px)`;
 
   // -----------------------------
   // Perfil -> stealthMode
@@ -250,25 +247,7 @@ export const MapView: React.FC = () => {
     if (profile) setStealthMode(profile.stealth_mode);
   }, [profile]);
 
-  // ✅ PREVENT MAP MARKER DRIFT BY LOCKING SCROLL NATIVELY
-  useEffect(() => {
-    const originalOverflow = document.body.style.overflow;
-    const originalPosition = document.body.style.position;
-    const originalWidth = document.body.style.width;
-    const originalHeight = document.body.style.height;
-
-    document.body.style.overflow = "hidden";
-    document.body.style.position = "fixed";
-    document.body.style.width = "100%";
-    document.body.style.height = "100%";
-
-    return () => {
-      document.body.style.overflow = originalOverflow;
-      document.body.style.position = originalPosition;
-      document.body.style.width = originalWidth;
-      document.body.style.height = originalHeight;
-    };
-  }, []);
+  // (Removed previous duplicate overflow-hidden block)
 
   // ✅ Contador visible (QH visibles/cargados)
   const visibleBrothersCount = useMemo(() => {
@@ -949,10 +928,13 @@ export const MapView: React.FC = () => {
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
-      {/* Container is fixed matching 100vh explicitly calculated without AppLayout scroll */}
-      <div className="bg-map-bg fixed inset-0 overflow-hidden" style={{ height: "calc(var(--vh, 1vh) * 100)" }}>
+      {/* Container is absolutely fixed, blocking touch chains */}
+      <div 
+        className="bg-map-bg fixed inset-0 overflow-hidden" 
+        style={{ touchAction: "none", overscrollBehavior: "none", zIndex: 0 }}
+      >
         {/* MAP */}
-        <div className="absolute inset-0 z-0">
+        <div className="absolute inset-0 z-0 pointer-events-auto">
           <div ref={mapDivRef} style={{ height: "100%", width: "100%", background: "#0b1220" }} />
 
           {isLoading && (
