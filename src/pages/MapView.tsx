@@ -349,6 +349,7 @@ export const MapView: React.FC = () => {
       maxZoom: 18,
       fadeDuration: 0,
       renderWorldCopies: false,
+      trackResize: true,
       attributionControl: false,
       dragRotate: false,
       pitchWithRotate: false,
@@ -376,12 +377,12 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cada vez que cambie el layout (bottom nav), resize al mapa
+  // Cada vez que cambie el viewport base, resize al mapa
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     requestAnimationFrame(() => map.resize());
-  }, [bottomNavH]);
+  }, []);
 
   // -----------------------------
   // Center helper
@@ -992,7 +993,7 @@ export const MapView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-1.5 items-end pointer-events-auto">
+          <div className="flex flex-col gap-4 items-end pointer-events-auto">
             <Button
               variant="masonic"
               size="icon"
