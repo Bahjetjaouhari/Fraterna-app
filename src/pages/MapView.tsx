@@ -250,6 +250,26 @@ export const MapView: React.FC = () => {
     if (profile) setStealthMode(profile.stealth_mode);
   }, [profile]);
 
+  // ✅ PREVENT MAP MARKER DRIFT BY LOCKING SCROLL NATIVELY
+  useEffect(() => {
+    const originalOverflow = document.body.style.overflow;
+    const originalPosition = document.body.style.position;
+    const originalWidth = document.body.style.width;
+    const originalHeight = document.body.style.height;
+
+    document.body.style.overflow = "hidden";
+    document.body.style.position = "fixed";
+    document.body.style.width = "100%";
+    document.body.style.height = "100%";
+
+    return () => {
+      document.body.style.overflow = originalOverflow;
+      document.body.style.position = originalPosition;
+      document.body.style.width = originalWidth;
+      document.body.style.height = originalHeight;
+    };
+  }, []);
+
   // ✅ Contador visible (QH visibles/cargados)
   const visibleBrothersCount = useMemo(() => {
     return brothers.length;
@@ -929,8 +949,8 @@ export const MapView: React.FC = () => {
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
-      {/* ✅ CAMBIO ÚNICO: de "relative" a pantalla fija para bloquear el scroll del documento */}
-      <div className="bg-map-bg fixed inset-0 overflow-hidden" style={{ height: "100dvh" }}>
+      {/* Container is fixed matching 100vh explicitly calculated without AppLayout scroll */}
+      <div className="bg-map-bg fixed inset-0 overflow-hidden" style={{ height: "calc(var(--vh, 1vh) * 100)" }}>
         {/* MAP */}
         <div className="absolute inset-0 z-0">
           <div ref={mapDivRef} style={{ height: "100%", width: "100%", background: "#0b1220" }} />
@@ -944,12 +964,12 @@ export const MapView: React.FC = () => {
 
         {/* TOP CONTROLS */}
         <div
-          className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-start z-20"
-          style={{ top: "calc(env(safe-area-inset-top, 0px) + 12px)" }}
+          className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-start z-20 pointer-events-none"
+          style={{ top: "calc(env(safe-area-inset-top, 0px) + 8px)" }}
         >
-          <div className="glass-dark rounded-lg px-3 py-2 pointer-events-auto">
-            <p className="text-ivory/60 text-xs">Tu ubicación</p>
-            <p className="text-ivory font-medium">
+          <div className="glass-dark rounded-md px-2 py-1 pointer-events-auto shadow-md">
+            <p className="text-ivory/50 text-[9px] uppercase tracking-wider">Tu ubicación</p>
+            <p className="text-ivory text-[11px] font-medium leading-tight">
               {geoCity || profile?.city || (myLat != null ? "Obteniendo..." : "Sin ubicación")}, {geoCountry || profile?.country || "Venezuela"}
             </p>
           </div>
@@ -958,59 +978,60 @@ export const MapView: React.FC = () => {
             variant={stealthMode ? "masonic" : "masonic-dark"}
             size="icon"
             onClick={toggleStealthMode}
-            className="relative pointer-events-auto"
+            className="relative pointer-events-auto h-8 w-8 shadow-md"
           >
-            <Ghost size={20} />
-            {stealthMode && <span className="absolute -top-1 -right-1 w-2 h-2 bg-warning rounded-full" />}
+            <Ghost size={16} />
+            {stealthMode && <span className="absolute -top-[2px] -right-[2px] w-2 h-2 bg-warning rounded-full border border-black/50" />}
           </Button>
         </div>
 
         {/* SIDE CONTROLS */}
         <div
-          className="absolute right-2 md:right-4 flex flex-col gap-2 z-20"
-          style={{ top: "calc(env(safe-area-inset-top, 0px) + 92px)" }}
+          className="absolute right-2 md:right-4 flex flex-col gap-1.5 z-20 pointer-events-none"
+          style={{ top: "calc(env(safe-area-inset-top, 0px) + 60px)" }}
         >
-          <Button variant="masonic-dark" size="icon" onClick={zoomIn} className="pointer-events-auto">
-            <ZoomIn size={20} />
+          <Button variant="masonic-dark" size="icon" onClick={zoomIn} className="pointer-events-auto h-8 w-8 shadow-md">
+            <ZoomIn size={16} />
           </Button>
-          <Button variant="masonic-dark" size="icon" onClick={zoomOut} className="pointer-events-auto">
-            <ZoomOut size={20} />
+          <Button variant="masonic-dark" size="icon" onClick={zoomOut} className="pointer-events-auto h-8 w-8 shadow-md">
+            <ZoomOut size={16} />
           </Button>
         </div>
 
         {/* BOTTOM CONTROLS */}
-        <div className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-end z-20" style={{ bottom: bottomOffset }}>
-          <div className="glass-dark rounded-lg px-3 py-3 pointer-events-auto">
-            <div className="flex items-center gap-2">
-              <Users size={18} className="text-gold" />
+        <div className="absolute left-2 right-2 md:left-4 md:right-4 flex justify-between items-end z-20 pointer-events-none" style={{ bottom: bottomOffset }}>
+          <div className="glass-dark rounded-md px-2.5 py-1.5 pointer-events-auto shadow-md">
+            <div className="flex items-center gap-1.5">
+              <Users size={14} className="text-gold" />
               <div>
-                {/* ✅ CAMBIO MÍNIMO: ahora es REAL (nearbyBrothersCount) */}
-                <p className="text-ivory font-semibold">{nearbyBrothersCount}</p>
-                <p className="text-ivory/60 text-xs">Q∴H∴ cerca</p>
+                <p className="text-ivory text-xs font-semibold leading-none">{nearbyBrothersCount}</p>
+                <p className="text-ivory/50 text-[9px] uppercase tracking-wider leading-none mt-[2px]">Q∴H∴ cerca</p>
               </div>
             </div>
           </div>
 
-          <Button
-            variant="masonic"
-            size="icon-lg"
-            className="rounded-full shadow-gold pointer-events-auto"
-            onClick={() => updateMyLocation({ center: true })}
-            disabled={isUpdatingLocation}
-            title="Centrarme y actualizar"
-          >
-            {isUpdatingLocation ? <Loader2 size={24} className="animate-spin" /> : <Locate size={24} />}
-          </Button>
+          <div className="flex flex-col gap-1.5 items-end pointer-events-auto">
+            <Button
+              variant="masonic"
+              size="icon"
+              className="rounded-full shadow-gold h-10 w-10 flex-shrink-0"
+              onClick={() => updateMyLocation({ center: true })}
+              disabled={isUpdatingLocation}
+              title="Centrarme y actualizar"
+            >
+              {isUpdatingLocation ? <Loader2 size={18} className="animate-spin" /> : <Locate size={18} />}
+            </Button>
 
-          <Button
-            variant="masonic-dark"
-            size="icon"
-            className="pointer-events-auto"
-            title="Estilos de mapa"
-            onClick={() => setShowMapStyles(!showMapStyles)}
-          >
-            <Settings size={20} />
-          </Button>
+            <Button
+              variant="masonic-dark"
+              size="icon"
+              className="h-8 w-8 shadow-md"
+              title="Estilos de mapa"
+              onClick={() => setShowMapStyles(!showMapStyles)}
+            >
+              <Settings size={16} />
+            </Button>
+          </div>
         </div>
 
         {/* MAP STYLE SELECTOR PANEL */}

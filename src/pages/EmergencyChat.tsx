@@ -52,7 +52,12 @@ const EmergencyChat = () => {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
+  const [profileModalUserId, setProfileModalUserId] = useState<string | null>(null);
   const [activeUsersCount, setActiveUsersCount] = useState(0);
+
+  // Nuevo estado para visor fullscreen de fotos/videos
+  const [selectedMediaUrl, setSelectedMediaUrl] = useState<string | null>(null);
+  const [selectedMediaType, setSelectedMediaType] = useState<string | null>(null);
 
   const fetchProfilesForMessages = async (list: EmergencyMessage[]) => {
     const ids = Array.from(new Set(list.map((m) => m.user_id))).filter(Boolean);
@@ -368,9 +373,15 @@ const EmergencyChat = () => {
                         ].join(" ")}
                       >
                         {msg.media_url && (
-                          <div className="mb-2 rounded-md overflow-hidden bg-black/20 flex flex-col items-center">
+                          <div 
+                            className="mb-2 rounded-md overflow-hidden bg-black/20 flex flex-col items-center cursor-pointer"
+                            onClick={() => {
+                              setSelectedMediaUrl(msg.media_url || null);
+                              setSelectedMediaType(msg.media_type || null);
+                            }}
+                          >
                             {msg.media_type?.startsWith("video/") ? (
-                              <video src={msg.media_url} controls className="max-w-full max-h-[300px] object-contain rounded" />
+                              <video src={msg.media_url} className="max-w-full max-h-[300px] object-contain rounded pointer-events-none" />
                             ) : (
                               <img src={msg.media_url} alt="Adjunto" className="max-w-full max-h-[300px] object-contain rounded" />
                             )}
@@ -452,6 +463,49 @@ const EmergencyChat = () => {
           </div>
         </div>
       </div>
+
+      {/* Visor Multimedia a Pantalla Completa */}
+      {selectedMediaUrl && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 backdrop-blur-sm p-4"
+          onClick={() => {
+            setSelectedMediaUrl(null);
+            setSelectedMediaType(null);
+          }}
+        >
+          <button 
+            className="absolute top-safe right-4 p-2 bg-white/10 rounded-full text-white hover:bg-white/20 transition-colors z-50 cursor-pointer"
+            onClick={(e) => {
+              e.stopPropagation();
+              setSelectedMediaUrl(null);
+              setSelectedMediaType(null);
+            }}
+          >
+            <X size={24} />
+          </button>
+          
+          <div 
+            className="max-w-full max-h-full overflow-hidden flex items-center justify-center"
+            onClick={(e) => e.stopPropagation()} // Evitar cerrar al tocar la foto en sí
+          >
+            {selectedMediaType?.startsWith("video/") ? (
+              <video 
+                src={selectedMediaUrl} 
+                controls 
+                autoPlay
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
+              />
+            ) : (
+              <img 
+                src={selectedMediaUrl} 
+                alt="Imagen expandida" 
+                className="max-w-full max-h-[90vh] object-contain rounded-lg shadow-2xl" 
+              />
+            )}
+          </div>
+        </div>
+      )}
+
       <UserProfileModal userId={selectedUserId} onClose={() => setSelectedUserId(null)} />
     </AppLayout>
   );
