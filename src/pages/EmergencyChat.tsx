@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, AlertTriangle, Clock, Loader2, Users } from "lucide-react";
+import { Send, AlertTriangle, Clock, Loader2, Users, Camera, X } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
 import { AppLayout } from "@/components/layout/AppLayout";
@@ -7,6 +7,7 @@ import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
+import { resizeImageForAvatar } from "@/utils/resizeImage";
 
 type ProfileMini = { id: string; full_name: string | null; photo_url: string | null };
 
@@ -31,6 +32,8 @@ interface EmergencyMessage {
   city: string | null;
   created_at: string;
   expires_at: string | null;
+  media_url?: string | null;
+  media_type?: string | null;
   profiles?: {
     full_name: string | null;
     city: string | null;
@@ -43,6 +46,10 @@ const EmergencyChat = () => {
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  const [isUploadingMedia, setIsUploadingMedia] = useState(false);
+  const [mediaFile, setMediaFile] = useState<File | null>(null);
+  const [mediaPreview, setMediaPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
   const [selectedUserId, setSelectedUserId] = useState<string | null>(null);
   const [activeUsersCount, setActiveUsersCount] = useState(0);
@@ -75,7 +82,7 @@ const EmergencyChat = () => {
     // Traer solo mensajes no expirados
     const query = supabase
       .from("emergency_messages")
-      .select("id, message, user_id, city, created_at, expires_at, profiles(full_name, city)")
+      .select("id, message, user_id, city, created_at, expires_at, media_url, media_type, profiles(full_name, city)")
       .gt("expires_at", new Date().toISOString())
       .order("created_at", { ascending: true })
       .limit(100);
@@ -159,28 +166,91 @@ const EmergencyChat = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Límite de 50MB
+    if (file.size > 50 * 1024 * 1024) {
+      toast.error("El archivo es demasiado grande (máx 50MB)");
+      return;
+    }
+
+    setMediaFile(file);
+    const url = URL.createObjectURL(file);
+    setMediaPreview(url);
+  };
+
+  const clearMedia = () => {
+    setMediaFile(null);
+    if (mediaPreview) URL.revokeObjectURL(mediaPreview);
+    setMediaPreview(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  };
+
   const sendMessage = async () => {
-    if (!text.trim() || !user || isSending) return;
+    if ((!text.trim() && !mediaFile) || !user || isSending) return;
 
     setIsSending(true);
     const messageText = text.trim();
-    setText("");
 
     const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    
+    let uploadedMediaUrl: string | null = null;
+    let uploadedMediaType: string | null = null;
+
+    if (mediaFile) {
+      setIsUploadingMedia(true);
+      let fileToUpload = mediaFile;
+      
+      if (mediaFile.type.startsWith("image/")) {
+        try {
+          fileToUpload = await resizeImageForAvatar(mediaFile, 1280, 0.90);
+        } catch (e) {
+          console.error("Error resizing media image", e);
+        }
+      }
+
+      const fileExt = fileToUpload.name.split('.').pop() || 'tmp';
+      const filePath = `${user.id}/${crypto.randomUUID()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from("emergency_chat_media")
+        .upload(filePath, fileToUpload, { cacheControl: "3600", upsert: false });
+
+      if (uploadError) {
+        toast.error("Error al subir el archivo multimedia");
+        setIsSending(false);
+        setIsUploadingMedia(false);
+        return;
+      }
+
+      const { data: publicUrlData } = supabase.storage
+        .from("emergency_chat_media")
+        .getPublicUrl(filePath);
+        
+      uploadedMediaUrl = publicUrlData.publicUrl;
+      uploadedMediaType = fileToUpload.type;
+    }
 
     const { error } = await supabase.from("emergency_messages").insert({
       message: messageText,
       user_id: user.id,
       city: myCity,
       expires_at: expiresAt,
+      media_url: uploadedMediaUrl,
+      media_type: uploadedMediaType,
     });
 
     if (error) {
       console.error(error);
       toast.error("No se pudo enviar el mensaje");
-      setText(messageText);
+    } else {
+      setText("");
+      clearMedia();
     }
 
+    setIsUploadingMedia(false);
     setIsSending(false);
   };
 
@@ -297,7 +367,16 @@ const EmergencyChat = () => {
                             : "bg-navy/80 text-ivory border border-red-900/20 rounded-bl-md",
                         ].join(" ")}
                       >
-                        <p>{msg.message}</p>
+                        {msg.media_url && (
+                          <div className="mb-2 rounded-md overflow-hidden bg-black/20 flex flex-col items-center">
+                            {msg.media_type?.startsWith("video/") ? (
+                              <video src={msg.media_url} controls className="max-w-full max-h-[300px] object-contain rounded" />
+                            ) : (
+                              <img src={msg.media_url} alt="Adjunto" className="max-w-full max-h-[300px] object-contain rounded" />
+                            )}
+                          </div>
+                        )}
+                        {msg.message && <p>{msg.message}</p>}
                         <div className="flex items-center justify-end gap-2 mt-1">
                           <span className="text-[10px] opacity-50">
                             {formatTime(msg.created_at)}
@@ -319,22 +398,57 @@ const EmergencyChat = () => {
           </div>
 
           {/* Input */}
-          <div className="px-4 py-3 border-t border-white/10 flex gap-2">
-            <input
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              onKeyDown={handleKeyDown}
-              placeholder="Mensaje de emergencia…"
-              className="flex-1 rounded-md px-3 py-2 bg-navy/80 text-ivory placeholder:text-ivory/40 outline-none focus:ring-2 focus:ring-red-500/40"
-              disabled={isSending}
-            />
-            <Button
-              onClick={sendMessage}
-              disabled={!text.trim() || isSending}
-              className="bg-red-600 hover:bg-red-700 text-white font-semibold px-4 rounded-md"
-            >
-              {isSending ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
-            </Button>
+          <div className="px-3 py-3 border-t border-white/10 flex flex-col gap-2">
+            {mediaPreview && (
+              <div className="relative w-fit">
+                {mediaFile?.type.startsWith("video/") ? (
+                  <video src={mediaPreview} className="h-20 w-20 object-cover rounded-md border border-white/20" />
+                ) : (
+                  <img src={mediaPreview} alt="Preview" className="h-20 w-20 object-cover rounded-md border border-white/20" />
+                )}
+                <button
+                  onClick={clearMedia}
+                  className="absolute -top-2 -right-2 bg-red-600 text-white rounded-full p-1 shadow-md hover:bg-red-700"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+            
+            <div className="flex gap-2 items-end">
+              <input
+                type="file"
+                accept="image/*,video/*"
+                ref={fileInputRef}
+                onChange={handleFileSelect}
+                className="hidden"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={isSending}
+                className="shrink-0 bg-transparent border-white/20 text-ivory/70 hover:bg-white/10 hover:text-ivory rounded-md h-[42px] w-[42px]"
+              >
+                <Camera size={20} />
+              </Button>
+              <input
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                onKeyDown={handleKeyDown}
+                placeholder="Mensaje de emergencia…"
+                className="flex-1 rounded-md px-3 py-2 h-[42px] bg-navy/80 text-ivory placeholder:text-ivory/40 outline-none focus:ring-2 focus:ring-red-500/40"
+                disabled={isSending}
+              />
+              <Button
+                onClick={sendMessage}
+                disabled={(!text.trim() && !mediaFile) || isSending}
+                className="h-[42px] bg-red-600 hover:bg-red-700 text-white font-semibold px-4 rounded-md shrink-0"
+              >
+                {isSending || isUploadingMedia ? <Loader2 size={18} className="animate-spin" /> : <Send size={18} />}
+              </Button>
+            </div>
           </div>
         </div>
       </div>
