@@ -211,29 +211,55 @@ export const MapView: React.FC = () => {
   // Prevent Map Marker Drift natively
   // -----------------------------
   useEffect(() => {
-    // Para iOS/Android, prevenir overscroll y rubber-banding en el document
-    const originalOverscroll = document.body.style.overscrollBehavior;
-    const originalOverflow = document.body.style.overflow;
-    
-    document.body.style.overscrollBehavior = "none";
-    document.body.style.overflow = "hidden";
+    // Bloqueo total de documento y body para Safari iOS y Chrome Android
+    const html = document.documentElement;
+    const body = document.body;
 
-    // Bloqueador agresivo de scroll nativo para detener el drift de marcadores
+    const originalHtmlOverscroll = html.style.overscrollBehavior;
+    const originalHtmlOverflow = html.style.overflow;
+    const originalHtmlPosition = html.style.position;
+    const originalHtmlHeight = html.style.height;
+    
+    const originalBodyOverscroll = body.style.overscrollBehavior;
+    const originalBodyOverflow = body.style.overflow;
+    const originalBodyPosition = body.style.position;
+    const originalBodyHeight = body.style.height;
+    const originalBodyWidth = body.style.width;
+
+    // Enganchar HTML al instante
+    html.style.overscrollBehavior = "none";
+    html.style.overflow = "hidden";
+    html.style.position = "fixed";
+    html.style.height = "100%";
+
+    // Enganchar BODY al instante
+    body.style.overscrollBehavior = "none";
+    body.style.overflow = "hidden";
+    body.style.position = "fixed";
+    body.style.height = "100%";
+    body.style.width = "100%";
+
+    // Bloqueador agresivo de eventos táctiles
     const disableNativeScroll = (e: TouchEvent) => {
       const target = e.target as HTMLElement;
-      // Allow scroll only on specific elements if needed
       if (target.closest('.overflow-y-auto')) return;
-      
-      if (e.cancelable) {
-        e.preventDefault();
-      }
+      if (e.cancelable) e.preventDefault();
     };
 
     document.addEventListener("touchmove", disableNativeScroll, { passive: false });
 
     return () => {
-      document.body.style.overscrollBehavior = originalOverscroll;
-      document.body.style.overflow = originalOverflow;
+      html.style.overscrollBehavior = originalHtmlOverscroll;
+      html.style.overflow = originalHtmlOverflow;
+      html.style.position = originalHtmlPosition;
+      html.style.height = originalHtmlHeight;
+
+      body.style.overscrollBehavior = originalBodyOverscroll;
+      body.style.overflow = originalBodyOverflow;
+      body.style.position = originalBodyPosition;
+      body.style.height = originalBodyHeight;
+      body.style.width = originalBodyWidth;
+
       document.removeEventListener("touchmove", disableNativeScroll);
     };
   }, []);
@@ -993,26 +1019,28 @@ export const MapView: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex flex-col gap-4 items-end pointer-events-auto">
+          <div className="absolute left-1/2 -translate-x-1/2 bottom-0 pointer-events-auto">
             <Button
               variant="masonic"
               size="icon"
-              className="rounded-full shadow-gold h-10 w-10 flex-shrink-0"
+              className="rounded-full shadow-gold h-12 w-12 flex-shrink-0"
               onClick={() => updateMyLocation({ center: true })}
               disabled={isUpdatingLocation}
               title="Centrarme y actualizar"
             >
-              {isUpdatingLocation ? <Loader2 size={18} className="animate-spin" /> : <Locate size={18} />}
+              {isUpdatingLocation ? <Loader2 size={20} className="animate-spin" /> : <Locate size={20} />}
             </Button>
+          </div>
 
+          <div className="pointer-events-auto">
             <Button
               variant="masonic-dark"
               size="icon"
-              className="h-8 w-8 shadow-md"
+              className="h-10 w-10 shadow-md rounded-full"
               title="Estilos de mapa"
               onClick={() => setShowMapStyles(!showMapStyles)}
             >
-              <Settings size={16} />
+              <Settings size={18} />
             </Button>
           </div>
         </div>
