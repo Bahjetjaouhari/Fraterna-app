@@ -208,59 +208,29 @@ export const MapView: React.FC = () => {
   const RELATIONS_CACHE_TTL = 60_000; // 60 segundos
 
   // -----------------------------
-  // Prevent Map Marker Drift natively
+  // Prevent page scroll on Map view (lightweight — no position:fixed)
   // -----------------------------
   useEffect(() => {
-    // Bloqueo total de documento y body para Safari iOS y Chrome Android
     const html = document.documentElement;
     const body = document.body;
 
-    const originalHtmlOverscroll = html.style.overscrollBehavior;
-    const originalHtmlOverflow = html.style.overflow;
-    const originalHtmlPosition = html.style.position;
-    const originalHtmlHeight = html.style.height;
-    
-    const originalBodyOverscroll = body.style.overscrollBehavior;
-    const originalBodyOverflow = body.style.overflow;
-    const originalBodyPosition = body.style.position;
-    const originalBodyHeight = body.style.height;
-    const originalBodyWidth = body.style.width;
+    // Save originals
+    const origHtmlOverflow = html.style.overflow;
+    const origHtmlOverscroll = html.style.overscrollBehavior;
+    const origBodyOverflow = body.style.overflow;
+    const origBodyOverscroll = body.style.overscrollBehavior;
 
-    // Enganchar HTML al instante
-    html.style.overscrollBehavior = "none";
+    // Only hide overflow & disable overscroll bounce — do NOT use position:fixed
     html.style.overflow = "hidden";
-    html.style.position = "fixed";
-    html.style.height = "100%";
-
-    // Enganchar BODY al instante
-    body.style.overscrollBehavior = "none";
+    html.style.overscrollBehavior = "none";
     body.style.overflow = "hidden";
-    body.style.position = "fixed";
-    body.style.height = "100%";
-    body.style.width = "100%";
-
-    // Bloqueador agresivo de eventos táctiles
-    const disableNativeScroll = (e: TouchEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest('.overflow-y-auto')) return;
-      if (e.cancelable) e.preventDefault();
-    };
-
-    document.addEventListener("touchmove", disableNativeScroll, { passive: false });
+    body.style.overscrollBehavior = "none";
 
     return () => {
-      html.style.overscrollBehavior = originalHtmlOverscroll;
-      html.style.overflow = originalHtmlOverflow;
-      html.style.position = originalHtmlPosition;
-      html.style.height = originalHtmlHeight;
-
-      body.style.overscrollBehavior = originalBodyOverscroll;
-      body.style.overflow = originalBodyOverflow;
-      body.style.position = originalBodyPosition;
-      body.style.height = originalBodyHeight;
-      body.style.width = originalBodyWidth;
-
-      document.removeEventListener("touchmove", disableNativeScroll);
+      html.style.overflow = origHtmlOverflow;
+      html.style.overscrollBehavior = origHtmlOverscroll;
+      body.style.overflow = origBodyOverflow;
+      body.style.overscrollBehavior = origBodyOverscroll;
     };
   }, []);
 
@@ -955,10 +925,10 @@ export const MapView: React.FC = () => {
 
   return (
     <AppLayout showNav={true} isAdmin={isAdmin} darkMode={true}>
-      {/* Container is absolutely fixed, blocking touch chains */}
+      {/* Map container — NO touch-action:none, let MapLibre handle gestures */}
       <div 
         className="bg-map-bg fixed inset-0 overflow-hidden" 
-        style={{ touchAction: "none", overscrollBehavior: "none", zIndex: 0 }}
+        style={{ overscrollBehavior: "none", zIndex: 0 }}
       >
         {/* MAP */}
         <div className="absolute inset-0 z-0 pointer-events-auto">
