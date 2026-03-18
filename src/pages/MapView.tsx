@@ -708,7 +708,7 @@ export const MapView: React.FC = () => {
       const myName = profile?.full_name as string | undefined;
       const myEl = makeMarkerEl("me", myPhotoUrl, myName);
       myEl.style.zIndex = "50";
-      myMarkerRef.current = new maplibregl.Marker({ element: myEl })
+      myMarkerRef.current = new maplibregl.Marker({ element: myEl, anchor: "bottom" })
         .setLngLat([myLng, myLat])
         .addTo(map);
     }
@@ -750,7 +750,7 @@ export const MapView: React.FC = () => {
         setProfileModalUserId(b.user_id);
       });
 
-      const marker = new maplibregl.Marker({ element: el })
+      const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
         .setLngLat([b.lng, b.lat])
         .addTo(map);
 
