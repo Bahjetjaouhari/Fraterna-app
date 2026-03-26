@@ -30,15 +30,15 @@ export const ResetPassword: React.FC = () => {
 
       const errorCode = hashParams.get("error_code") || searchParams.get("error_code");
       const errorDescription = hashParams.get("error_description") || searchParams.get("error_description");
-      const error = hashParams.get("error") || searchParams.get("error");
+      const urlError = hashParams.get("error") || searchParams.get("error");
 
-      if (error || errorCode) {
-        console.log("Error in URL:", { errorCode, errorDescription, error });
+      if (urlError || errorCode) {
+        console.log("Error in URL:", { errorCode, errorDescription, urlError });
 
         if (errorCode === "otp_expired" || errorDescription?.includes("expired")) {
           setErrorType("expired");
           setErrorMessage("Este enlace ha expirado. Los enlaces de recuperación son válidos por 1 hora.");
-        } else if (error === "access_denied") {
+        } else if (urlError === "access_denied") {
           setErrorType("invalid");
           setErrorMessage("Este enlace no es válido. Por favor solicita uno nuevo.");
         } else {
