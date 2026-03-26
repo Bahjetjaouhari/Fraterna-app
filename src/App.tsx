@@ -25,6 +25,8 @@ const Profile = lazy(() => import("./pages/Profile"));
 const Friends = lazy(() => import("./pages/Friends"));
 const AdminPanel = lazy(() => import("./pages/AdminPanel"));
 const EmailVerified = lazy(() => import("./pages/EmailVerified"));
+const ForgotPassword = lazy(() => import("./pages/ForgotPassword"));
+const ResetPassword = lazy(() => import("./pages/ResetPassword"));
 
 const queryClient = new QueryClient();
 
@@ -55,6 +57,8 @@ const App = () => (
                 <Route path="/login" element={<Login />} />
                 <Route path="/verification" element={<Verification />} />
                 <Route path="/email-verified" element={<EmailVerified />} />
+                <Route path="/forgot-password" element={<ForgotPassword />} />
+                <Route path="/reset-password" element={<ResetPassword />} />
 
                 {/* Main App - Protected */}
                 <Route

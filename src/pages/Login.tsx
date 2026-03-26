@@ -1,13 +1,14 @@
 import React, { useState, useEffect } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { motion } from "framer-motion";
-import { Mail, Eye, EyeOff, ChevronRight, AlertTriangle } from "lucide-react";
+import { Mail, Eye, EyeOff, ChevronRight, AlertTriangle, MailCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/useAuth";
+import { supabase } from "@/integrations/supabase/client";
 
 export const Login: React.FC = () => {
   const navigate = useNavigate();
@@ -17,6 +18,8 @@ export const Login: React.FC = () => {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [showForceLogin, setShowForceLogin] = useState(false);
+  const [showEmailConfirm, setShowEmailConfirm] = useState(false);
+  const [resendingEmail, setResendingEmail] = useState(false);
 
   // Redirect if already logged in
   useEffect(() => {
@@ -40,6 +43,7 @@ export const Login: React.FC = () => {
     }
 
     setIsLoading(true);
+    setShowEmailConfirm(false);
 
     try {
       const { error } = await signIn(email, password, false);
@@ -48,6 +52,13 @@ export const Login: React.FC = () => {
         if (error.message === 'session_active_elsewhere') {
           setShowForceLogin(true);
           toast.error("Sesión activa en otro dispositivo");
+        } else if (
+          error.message.includes('Email not confirmed') ||
+          error.message.includes('email_not_confirmed') ||
+          error.message.includes('Email not verified')
+        ) {
+          setShowEmailConfirm(true);
+          toast.error("Debes confirmar tu correo electrónico primero");
         } else if (error.message.includes('Invalid login')) {
           toast.error("Credenciales incorrectas");
         } else {
@@ -62,6 +73,30 @@ export const Login: React.FC = () => {
       toast.error("Error al iniciar sesión");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const handleResendConfirmation = async () => {
+    setResendingEmail(true);
+    try {
+      const { error } = await supabase.auth.resend({
+        type: 'signup',
+        email: email,
+        options: {
+          emailRedirectTo: "https://fraterna-app.pages.dev/email-verified",
+        },
+      });
+
+      if (error) {
+        toast.error(error.message || "Error al reenviar el correo");
+      } else {
+        toast.success("Correo de confirmación reenviado. Revisa tu bandeja de entrada.");
+        setShowEmailConfirm(false);
+      }
+    } catch {
+      toast.error("Error al reenviar el correo");
+    } finally {
+      setResendingEmail(false);
     }
   };
 
@@ -153,6 +188,7 @@ export const Login: React.FC = () => {
           <div className="text-right">
             <button
               type="button"
+              onClick={() => navigate("/forgot-password")}
               className="text-sm text-gold hover:underline"
             >
               ¿Olvidaste tu contraseña?
@@ -196,19 +232,56 @@ export const Login: React.FC = () => {
             className="bg-navy-light border border-gold/20 p-6 rounded-2xl w-full max-w-sm text-center shadow-2xl relative overflow-hidden"
           >
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-gold to-transparent" />
-            
+
             <AlertTriangle size={48} className="text-gold mx-auto mb-4" />
             <h3 className="text-xl font-display text-ivory mb-2">Sesión Activa Detectada</h3>
             <p className="text-ivory/70 text-sm mb-6">
               Tu cuenta está siendo usada actualmente en otro dispositivo. ¿Deseas cerrar la sesión remota y entrar desde aquí?
             </p>
-            
+
             <div className="flex flex-col gap-3">
               <Button onClick={handleForceLogin} variant="masonic" className="w-full">
                 Sí, forzar entrada aquí
               </Button>
               <Button onClick={() => setShowForceLogin(false)} variant="outline" className="w-full border-ivory/20 bg-transparent text-ivory/70 hover:bg-ivory/10 hover:text-ivory">
                 Cancelar
+              </Button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Email Confirmation Modal */}
+      {showEmailConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-navy/80 backdrop-blur-sm">
+          <motion.div
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            className="bg-navy-light border border-gold/20 p-6 rounded-2xl w-full max-w-sm text-center shadow-2xl relative overflow-hidden"
+          >
+            <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-gold to-transparent" />
+
+            <MailCheck size={48} className="text-gold mx-auto mb-4" />
+            <h3 className="text-xl font-display text-ivory mb-2">Confirma tu Correo</h3>
+            <p className="text-ivory/70 text-sm mb-6">
+              Tu cuenta aún no ha sido verificada. Revisa tu bandeja de entrada (y spam) para encontrar el correo de confirmación.
+            </p>
+
+            <div className="flex flex-col gap-3">
+              <Button
+                onClick={handleResendConfirmation}
+                variant="masonic"
+                className="w-full"
+                disabled={resendingEmail}
+              >
+                {resendingEmail ? "Enviando..." : "Reenviar correo de confirmación"}
+              </Button>
+              <Button
+                onClick={() => setShowEmailConfirm(false)}
+                variant="outline"
+                className="w-full border-ivory/20 bg-transparent text-ivory/70 hover:bg-ivory/10 hover:text-ivory"
+              >
+                Cerrar
               </Button>
             </div>
           </motion.div>
