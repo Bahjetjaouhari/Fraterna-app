@@ -232,6 +232,15 @@
     background: hsl(var(--navy));
   }
 
+  /* Safe Area for Android/iOS */
+  .safe-area-bottom {
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  .safe-area-top {
+    padding-top: env(safe-area-inset-top, 0px);
+  }
+
   /* ✅ RESTAURADO: glass-dark + shadow-gold (esto arregla el fondo azul de tu UI) */
   .glass-dark {
     background: hsl(var(--navy) / 0.86);

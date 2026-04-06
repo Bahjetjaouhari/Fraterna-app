@@ -286,7 +286,7 @@ export const ResetPassword: React.FC = () => {
       </div>
 
       {/* Footer */}
-      <div className="px-8 pb-8 text-center">
+      <div className="px-8 pb-8 safe-area-bottom text-center">
         <div className="flex items-center justify-center gap-1.5 opacity-70">
           <span className="text-gold text-[10px]">♔</span>
           <p className="text-gold/80 text-[10px] tracking-[0.15em] uppercase font-medium">

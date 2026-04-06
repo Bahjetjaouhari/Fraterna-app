@@ -94,6 +94,32 @@ export type Database = {
           },
         ]
       }
+      chat_read_state: {
+        Row: {
+          user_id: string
+          global_last_read_at: string
+          emergency_last_read_at: string
+        }
+        Insert: {
+          user_id: string
+          global_last_read_at?: string
+          emergency_last_read_at?: string
+        }
+        Update: {
+          user_id?: string
+          global_last_read_at?: string
+          emergency_last_read_at?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chat_read_state_user_id_fkey"
+            columns: ["user_id"]
+            isOneToOne: true
+            referencedRelation: "profiles"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       emergency_messages: {
         Row: {
           city: string | null
@@ -263,6 +289,7 @@ export type Database = {
           id: string
           is_active: boolean
           is_blocked: boolean
+          is_online: boolean
           is_verified: boolean
           last_seen_at: string | null
           location_visibility_mode: string
@@ -287,6 +314,7 @@ export type Database = {
           id: string
           is_active?: boolean
           is_blocked?: boolean
+          is_online?: boolean
           is_verified?: boolean
           last_seen_at?: string | null
           location_visibility_mode?: string
@@ -311,6 +339,7 @@ export type Database = {
           id?: string
           is_active?: boolean
           is_blocked?: boolean
+          is_online?: boolean
           is_verified?: boolean
           last_seen_at?: string | null
           location_visibility_mode?: string

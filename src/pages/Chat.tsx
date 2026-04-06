@@ -5,9 +5,11 @@ import { Input } from "@/components/ui/input";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnreadCount } from "@/hooks/useUnreadCount";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
+import { sendGlobalMessageNotification } from "@/lib/notifications";
 
 interface ChatMessage {
   id: string;
@@ -64,6 +66,7 @@ function AvatarMini({ name, avatarUrl }: { name: string; avatarUrl: string | nul
 
 export default function Chat() {
   const { user, isAdmin, profile } = useAuth();
+  const { markGlobalAsRead } = useUnreadCount();
 
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [profilesById, setProfilesById] = useState<Record<string, ProfileMini>>({});
@@ -75,6 +78,11 @@ export default function Chat() {
   const [activeUsersCount, setActiveUsersCount] = useState(0);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+
+  // Marcar chat como leído cuando se abre
+  useEffect(() => {
+    markGlobalAsRead();
+  }, [markGlobalAsRead]);
 
   const fetchProfilesForMessages = async (list: ChatMessage[]) => {
     const ids = Array.from(new Set(list.map((m) => m.user_id))).filter(Boolean);
@@ -185,6 +193,11 @@ export default function Chat() {
     if (error) {
       toast.error("Error al enviar mensaje");
       setNewMessage(messageText);
+    } else {
+      // Send push notification to all users
+      sendGlobalMessageNotification(messageText, user.id).catch((err) => {
+        console.error('Error sending global message notification:', err);
+      });
     }
 
     setIsSending(false);

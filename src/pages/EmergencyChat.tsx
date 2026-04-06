@@ -1,13 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Send, AlertTriangle, Clock, Loader2, Users, Camera, X } from "lucide-react";
+import { Send, AlertTriangle, Clock, Loader2, Users, Camera, X, Image } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/useAuth";
+import { useUnreadCount } from "@/hooks/useUnreadCount";
 import { AppLayout } from "@/components/layout/AppLayout";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
 import { Button } from "@/components/ui/button";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
 import { resizeImageForAvatar } from "@/utils/resizeImage";
+import { Camera as CameraPlugin, CameraResultType, CameraSource } from "@capacitor/camera";
+import { Capacitor } from "@capacitor/core";
 
 type ProfileMini = { id: string; full_name: string | null; photo_url: string | null };
 
@@ -42,10 +45,16 @@ interface EmergencyMessage {
 
 const EmergencyChat = () => {
   const { user, profile, isAdmin } = useAuth();
+  const { markEmergencyAsRead } = useUnreadCount();
   const [messages, setMessages] = useState<EmergencyMessage[]>([]);
   const [text, setText] = useState("");
   const [loading, setLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+
+  // Marcar chat de emergencia como leído cuando se abre
+  useEffect(() => {
+    markEmergencyAsRead();
+  }, [markEmergencyAsRead]);
   const [isUploadingMedia, setIsUploadingMedia] = useState(false);
   const [mediaFile, setMediaFile] = useState<File | null>(null);
   const [mediaPreview, setMediaPreview] = useState<string | null>(null);
@@ -186,6 +195,70 @@ const EmergencyChat = () => {
     setMediaPreview(url);
   };
 
+  // Función para tomar foto o seleccionar de galería usando Capacitor Camera
+  const handleTakePhoto = async (source: CameraSource) => {
+    try {
+      // Verificar si estamos en dispositivo nativo
+      if (!Capacitor.isNativePlatform()) {
+        // En web, usar el input file
+        if (fileInputRef.current) {
+          fileInputRef.current.click();
+        }
+        return;
+      }
+
+      // Solicitar permisos
+      const permissionStatus = await CameraPlugin.checkPermissions();
+
+      if (permissionStatus.camera !== 'granted' && source === CameraSource.Camera) {
+        const requestResult = await CameraPlugin.requestPermissions();
+        if (requestResult.camera !== 'granted') {
+          toast.error("Se necesita permiso de cámara para tomar fotos");
+          return;
+        }
+      }
+
+      // Tomar foto o seleccionar de galería
+      const photo = await CameraPlugin.getPhoto({
+        quality: 90,
+        allowEditing: false,
+        resultType: CameraResultType.Base64,
+        source: source,
+        saveToGallery: source === CameraSource.Camera,
+      });
+
+      // Convertir base64 a File
+      const response = await fetch(`data:image/jpeg;base64,${photo.base64String}`);
+      const blob = await response.blob();
+      const file = new File([blob], `photo_${Date.now()}.jpg`, { type: 'image/jpeg' });
+
+      setMediaFile(file);
+      const url = URL.createObjectURL(file);
+      setMediaPreview(url);
+    } catch (error) {
+      console.error('Error al capturar imagen:', error);
+      // Si el usuario cancela, no mostrar error
+      if ((error as any)?.message?.includes('User cancelled')) {
+        return;
+      }
+      toast.error("Error al capturar imagen");
+    }
+  };
+
+  // Mostrar opciones: cámara o galería
+  const [showMediaOptions, setShowMediaOptions] = useState(false);
+
+  const handleMediaButtonClick = () => {
+    if (Capacitor.isNativePlatform()) {
+      setShowMediaOptions(true);
+    } else {
+      // En web, abrir selector de archivos directamente
+      if (fileInputRef.current) {
+        fileInputRef.current.click();
+      }
+    }
+  };
+
   const clearMedia = () => {
     setMediaFile(null);
     if (mediaPreview) URL.revokeObjectURL(mediaPreview);
@@ -253,10 +326,39 @@ const EmergencyChat = () => {
     } else {
       setText("");
       clearMedia();
+
+      // Send push notification to users in the same city
+      sendPushNotification(messageText, myCity, user.id);
     }
 
     setIsUploadingMedia(false);
     setIsSending(false);
+  };
+
+  // Send push notification via Edge Function
+  const sendPushNotification = async (message: string, city: string | null, senderId: string) => {
+    try {
+      const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+      const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
+
+      await fetch(`${supabaseUrl}/functions/v1/send-push-notification`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${supabaseAnonKey}`,
+        },
+        body: JSON.stringify({
+          type: 'emergency_message',
+          data: {
+            message,
+            city,
+            user_id: senderId,
+          },
+        }),
+      });
+    } catch (error) {
+      console.error('Error sending push notification:', error);
+    }
   };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
@@ -434,11 +536,37 @@ const EmergencyChat = () => {
                 onChange={handleFileSelect}
                 className="hidden"
               />
+
+              {/* Botón de cámara con opciones en móvil */}
+              {showMediaOptions && (
+                <div className="absolute bottom-16 left-3 bg-navy border border-white/20 rounded-lg shadow-lg overflow-hidden z-50">
+                  <button
+                    onClick={() => {
+                      setShowMediaOptions(false);
+                      handleTakePhoto(CameraSource.Camera);
+                    }}
+                    className="flex items-center gap-2 px-4 py-3 w-full text-left text-ivory hover:bg-white/10 transition-colors"
+                  >
+                    <Camera size={18} />
+                    <span>Tomar foto</span>
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowMediaOptions(false);
+                      handleTakePhoto(CameraSource.Photos);
+                    }}
+                    className="flex items-center gap-2 px-4 py-3 w-full text-left text-ivory hover:bg-white/10 transition-colors"
+                  >
+                    <Image size={18} />
+                    <span>Galería</span>
+                  </button>
+                </div>
+              )}
               <Button
                 type="button"
                 variant="outline"
                 size="icon"
-                onClick={() => fileInputRef.current?.click()}
+                onClick={handleMediaButtonClick}
                 disabled={isSending}
                 className="shrink-0 bg-transparent border-white/20 text-ivory/70 hover:bg-white/10 hover:text-ivory rounded-md h-[42px] w-[42px]"
               >

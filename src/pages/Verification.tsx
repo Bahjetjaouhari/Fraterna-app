@@ -182,7 +182,7 @@ export const Verification: React.FC = () => {
     };
 
     return (
-      <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-8 text-center">
+      <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-8 text-center safe-area-bottom">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -253,7 +253,7 @@ export const Verification: React.FC = () => {
   // Verificación completada
   if (verificationComplete) {
     return (
-      <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-8 text-center">
+      <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-8 text-center safe-area-bottom">
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}

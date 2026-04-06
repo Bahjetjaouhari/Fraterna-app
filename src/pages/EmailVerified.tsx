@@ -43,7 +43,7 @@ const EmailVerified = () => {
   }, []);
 
   return (
-    <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-6">
+    <div className="min-h-screen bg-navy flex flex-col items-center justify-center px-6 safe-area-bottom">
       <div className="max-w-sm w-full flex flex-col items-center text-center">
         {status === "loading" && (
           <>

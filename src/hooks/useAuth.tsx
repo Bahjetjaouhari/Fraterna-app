@@ -1,5 +1,7 @@
 import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
 import { User, Session } from '@supabase/supabase-js';
+import { Capacitor } from '@capacitor/core';
+import { Preferences } from '@capacitor/preferences';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Profile {
@@ -23,6 +25,7 @@ interface Profile {
   created_at: string;
   updated_at: string;
   is_active?: boolean;
+  is_online?: boolean;
   current_device_id?: string | null;
 }
 
@@ -67,13 +70,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   // Get or generate a persistent local device ID for this browser/device
-  const getLocalDeviceId = () => {
-    let deviceId = localStorage.getItem('fraterna_device_id');
-    if (!deviceId) {
-      deviceId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
-      localStorage.setItem('fraterna_device_id', deviceId);
+  // Uses Capacitor Preferences on native platforms for persistent storage
+  const getLocalDeviceId = async () => {
+    const storageKey = 'fraterna_device_id';
+
+    if (Capacitor.isNativePlatform()) {
+      const { value } = await Preferences.get({ key: storageKey });
+      if (value) return value;
+
+      const newDeviceId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+      await Preferences.set({ key: storageKey, value: newDeviceId });
+      return newDeviceId;
+    } else {
+      // Web fallback to localStorage
+      let deviceId = localStorage.getItem(storageKey);
+      if (!deviceId) {
+        deviceId = crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15);
+        localStorage.setItem(storageKey, deviceId);
+      }
+      return deviceId;
     }
-    return deviceId;
   };
 
   const fetchProfile = async (userId: string) => {
@@ -99,7 +115,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
       if (profileData) {
         // 🔴 CHECK FOR SINGLE DEVICE LOCK
-        const localDeviceId = getLocalDeviceId();
+        const localDeviceId = await getLocalDeviceId();
         // @ts-expect-error missing column in generated types
         if (profileData.current_device_id && profileData.current_device_id !== localDeviceId && !isForcingLogin) {
           console.warn('Sesión iniciada en otro dispositivo, cerrando sesión local');
@@ -201,20 +217,24 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           .select('current_device_id')
           .eq('id', data.user.id)
           .single();
-          
-        const localDeviceId = getLocalDeviceId();
-        
+
+        const localDeviceId = await getLocalDeviceId();
+
         // @ts-expect-error missing column in generated types
         if (profileCheck?.current_device_id && profileCheck.current_device_id !== localDeviceId && !force) {
           // Si no está forzando y la cuenta la tiene otro
           await supabase.auth.signOut();
           return { error: new Error('session_active_elsewhere') };
         }
-        
+
         // Registrar el nuevo dispositivo
         // @ts-expect-error missing column in generated types
         await supabase.from('profiles').update({ current_device_id: localDeviceId }).eq('id', data.user.id);
-        
+
+        // Mark user as online
+        // @ts-expect-error missing column in generated types
+        await supabase.from('profiles').update({ is_online: true }).eq('id', data.user.id);
+
         if (force) {
           // Ya se actualizó en BD, podemos quitar la bandera y recargar
           setIsForcingLogin(false);
@@ -230,11 +250,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    // Mark user as inactive before closing session
+    // Mark user as offline and clear session data before closing session
     if (user?.id) {
       // eslint-disable-next-line @typescript-eslint/ban-ts-comment
       // @ts-ignore
-      await supabase.from('profiles').update({ last_seen_at: null, current_device_id: null }).eq('id', user.id);
+      await supabase.from('profiles').update({
+        last_seen_at: null,
+        current_device_id: null,
+        is_online: false
+      }).eq('id', user.id);
     }
     await supabase.auth.signOut();
     setProfile(null);

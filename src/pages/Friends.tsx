@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
+import { sendFriendRequestNotification, sendFriendAcceptedNotification } from "@/lib/notifications";
 
 type FriendshipRow = {
   id: string;
@@ -256,6 +257,11 @@ const Friends: React.FC = () => {
 
           if (upErr) throw upErr;
 
+          // Send push notification
+          sendFriendRequestNotification(myId, otherId).catch((err) => {
+            console.error('Error sending friend request notification:', err);
+          });
+
           toast.success("Solicitud enviada");
           await refreshAll();
           return;
@@ -273,6 +279,11 @@ const Friends: React.FC = () => {
         });
 
         if (error) throw error;
+
+        // Send push notification
+        sendFriendRequestNotification(myId, otherId).catch((err) => {
+          console.error('Error sending friend request notification:', err);
+        });
 
         toast.success("Solicitud enviada");
         await refreshAll();
@@ -292,6 +303,15 @@ const Friends: React.FC = () => {
       if (!myId) return;
 
       try {
+        // First get the friendship to know who sent it
+        const { data: friendship, error: getError } = await supabase
+          .from("friendships")
+          .select("requester_id, addressee_id")
+          .eq("id", rowId)
+          .single();
+
+        if (getError) throw getError;
+
         const { data, error } = await supabase
           .from("friendships")
           .update({ status: "accepted" })
@@ -306,6 +326,13 @@ const Friends: React.FC = () => {
           toast.error("No se pudo aceptar (no autorizado o ya no estÃ¡ pendiente).");
           await refreshAll();
           return;
+        }
+
+        // Send push notification to the original requester
+        if (friendship?.requester_id) {
+          sendFriendAcceptedNotification(myId, friendship.requester_id).catch((err) => {
+            console.error('Error sending friend accepted notification:', err);
+          });
         }
 
         toast.success("Solicitud aceptada");

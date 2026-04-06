@@ -311,7 +311,7 @@ export const Register: React.FC = () => {
         </div>
 
         {/* Submit */}
-        <div className="pt-4 space-y-4">
+        <div className="pt-4 space-y-4 pb-8 safe-area-bottom">
           <Button
             type="submit"
             variant="masonic"

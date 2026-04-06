@@ -8,6 +8,7 @@ import { AuthProvider } from "@/hooks/useAuth";
 import { ProtectedRoute } from "@/components/ProtectedRoute";
 import ErrorBoundary from "@/components/ErrorBoundary";
 import { PushNotificationListener } from "@/components/PushNotificationListener";
+import { LocationServiceWrapper } from "@/components/LocationServiceWrapper";
 
 // Eager: páginas de entrada (carga inicial rápida)
 import Index from "./pages/Index";
@@ -46,6 +47,7 @@ const App = () => (
         <AuthProvider>
           <ErrorBoundary>
             <PushNotificationListener />
+            <LocationServiceWrapper />
             <Suspense fallback={<PageLoader />}>
               <Routes>
                 {/* Splash / Entry */}

@@ -24,7 +24,14 @@ const config: CapacitorConfig = {
       style: 'LIGHT',
       backgroundColor: '#0a0a1a',
     },
+    PushNotifications: {
+      presentationOptions: ['badge', 'sound', 'alert'],
+    },
   },
 };
+
+// Android notification channel for Firebase Console
+// When sending from Firebase Console, use channel_id: "default"
+// Or create a custom channel in the app
 
 export default config;

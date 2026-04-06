@@ -48,6 +48,7 @@ interface BrotherLocation {
     location_visibility_mode?: "public" | "friends" | "friends_selected";
     photo_url?: string;
     last_seen_at?: string | null;
+    is_online?: boolean;
   };
 }
 
@@ -251,7 +252,7 @@ export const MapView: React.FC = () => {
   }, [brothers]);
 
   // ✅ NUEVO (mínimo): QH cerca REAL (distancia + radio + tu ubicación)
-  // Solo cuenta QH ACTIVOS (last_seen_at dentro de 5 min) — los inactivos (rojo) no cuentan
+  // Solo cuenta QH ACTIVOS (is_online + tracking_enabled + no stealth_mode)
   const nearbyBrothersCount = useMemo(() => {
     // Si no hay perfil o no hay ubicación actual, no podemos calcular cercanía real
     if (!profile) return 0;
@@ -260,19 +261,15 @@ export const MapView: React.FC = () => {
     const radiusKm = typeof profile.proximity_radius_km === "number" ? profile.proximity_radius_km : 5;
     if (radiusKm === 0) return 0;
 
-    const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-    const nowMs = Date.now();
-
     let count = 0;
     for (const b of brothers) {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue; // doble seguro
 
-      // Solo contar QH activos (verde) — ignorar inactivos (rojo)
-      const lastSeen = b.profile?.last_seen_at;
-      const isActive = lastSeen
-        ? (nowMs - new Date(lastSeen).getTime()) < ACTIVE_THRESHOLD_MS
-        : false;
+      // Usuario activo: is_online=true AND tracking_enabled=true AND stealth_mode=false
+      const isActive = b.profile?.is_online === true &&
+                       b.profile?.tracking_enabled !== false &&
+                       b.profile?.stealth_mode !== true;
       if (!isActive) continue;
 
       const dist = haversineDistance(myLat, myLng, b.lat, b.lng);
@@ -454,7 +451,8 @@ export const MapView: React.FC = () => {
              tracking_enabled,
              location_visibility_mode,
              photo_url,
-             last_seen_at
+             last_seen_at,
+             is_online
            )`
         )
         .neq("user_id", user.id);
@@ -686,9 +684,6 @@ export const MapView: React.FC = () => {
     // -- Brother markers --
     const nextIds = new Set<string>();
 
-    const ACTIVE_THRESHOLD_MS = 5 * 60 * 1000; // 5 minutes
-    const nowMs = Date.now();
-
     for (const b of brothers) {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue;
@@ -703,11 +698,11 @@ export const MapView: React.FC = () => {
         isNearby = distKm < 1;
       }
 
-      // Determine active status: active if last_seen_at is within 5 minutes
-      const lastSeen = b.profile?.last_seen_at;
-      const isActive = lastSeen
-        ? (nowMs - new Date(lastSeen).getTime()) < ACTIVE_THRESHOLD_MS
-        : false;
+      // Determine active status: active if is_online=true AND tracking_enabled=true AND stealth_mode=false
+      // Shows green if user has active session, red if manually logged out or disabled tracking
+      const isActive = b.profile?.is_online === true &&
+                       b.profile?.tracking_enabled !== false &&
+                       b.profile?.stealth_mode !== true;
 
       // Remove old marker to update photo/proximity/status state
       const existing = brotherMarkersByIdRef.current[b.user_id];

@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "755900181817",
+    "project_id": "fraterna-dca37",
+    "storage_bucket": "fraterna-dca37.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:755900181817:android:ea75135585090d7bbe0ce8",
+        "android_client_info": {
+          "package_name": "app.fraterna.beta"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAYKhs8kDmwYosHedyNiD_lHQlcsjLz8oY"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
