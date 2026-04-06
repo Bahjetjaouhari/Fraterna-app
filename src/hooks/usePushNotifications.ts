@@ -5,6 +5,19 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
+// Clear badge on Android
+const clearBadge = async () => {
+  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+    try {
+      // On Android, we clear all notifications which also clears the badge
+      await PushNotifications.removeAllDeliveredNotifications();
+      console.log('Badge cleared');
+    } catch (error) {
+      console.error('Error clearing badge:', error);
+    }
+  }
+};
+
 export const usePushNotifications = () => {
   const [fcmToken, setFcmToken] = useState<string | null>(null);
   const { session } = useAuth();
@@ -45,6 +58,9 @@ export const usePushNotifications = () => {
 
     const initPushNotifications = async () => {
       try {
+        // Clear any existing badges on app start
+        await clearBadge();
+
         // 1. Request permission
         let permStatus = await PushNotifications.checkPermissions();
 
@@ -98,8 +114,10 @@ export const usePushNotifications = () => {
         });
 
         // Method called when tapping on a notification
-        await PushNotifications.addListener('pushNotificationActionPerformed', (notification: ActionPerformed) => {
+        await PushNotifications.addListener('pushNotificationActionPerformed', async (notification: ActionPerformed) => {
           console.log('Push action performed: ' + JSON.stringify(notification));
+          // Clear badge when notification is tapped
+          await clearBadge();
           // Here we would typically route to a specific chat or screen based on the notification data
         });
 
