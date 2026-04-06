@@ -156,6 +156,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
+        // Mark user as online when session is restored
+        supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
       }
       setIsLoading(false);
     });
@@ -167,6 +169,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         if (session?.user) {
           setTimeout(() => fetchProfile(session.user.id), 100);
+          // Mark user as online when they log in
+          supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
         } else {
           setProfile(null);
           setRoles([]);
@@ -176,9 +180,53 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     );
 
-    return () => subscription.unsubscribe();
+    // Mark user as offline when app closes (web and mobile)
+    const markOffline = async () => {
+      if (user?.id) {
+        try {
+          // Use sendBeacon for reliable delivery on page close
+          const url = `https://vzlbvknauwvrqwpvtaqe.supabase.co/rest/v1/profiles?id=eq.${user.id}`;
+          const data = JSON.stringify({ is_online: false });
+
+          // Try sendBeacon first (more reliable for page close)
+          if (navigator.sendBeacon) {
+            const blob = new Blob([data], { type: 'application/json' });
+            navigator.sendBeacon(url, blob);
+          }
+        } catch (err) {
+          console.error('Error marking user offline:', err);
+        }
+      }
+    };
+
+    // Handle app close/refresh
+    const handleBeforeUnload = () => {
+      markOffline();
+    };
+
+    // Handle visibility change (tab switch, minimize, etc.)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // User switched away - mark as offline after a delay
+        // This prevents marking offline on quick tab switches
+        setTimeout(() => {
+          if (document.visibilityState === 'hidden') {
+            markOffline();
+          }
+        }, 30000); // 30 second delay
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      subscription.unsubscribe();
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [user?.id]);
 
   const signUp = async (email: string, password: string, metadata: Record<string, string>) => {
     try {
@@ -252,13 +300,21 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => {
     // Mark user as offline and clear session data before closing session
     if (user?.id) {
-      // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-      // @ts-ignore
-      await supabase.from('profiles').update({
-        last_seen_at: null,
-        current_device_id: null,
-        is_online: false
-      }).eq('id', user.id);
+      try {
+        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
+        // @ts-ignore
+        const { error } = await supabase.from('profiles').update({
+          last_seen_at: null,
+          current_device_id: null,
+          is_online: false
+        }).eq('id', user.id);
+
+        if (error) {
+          console.error('Error marking user as offline:', error);
+        }
+      } catch (err) {
+        console.error('Exception marking user as offline:', err);
+      }
     }
     await supabase.auth.signOut();
     setProfile(null);
