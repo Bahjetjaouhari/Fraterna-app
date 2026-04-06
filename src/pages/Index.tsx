@@ -2,18 +2,37 @@ import React, { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
+import { useAuth } from "@/hooks/useAuth";
 
 const Index: React.FC = () => {
   const navigate = useNavigate();
+  const { user, isLoading, isVerified, profile } = useAuth();
 
   useEffect(() => {
-    // Auto-redirect to onboarding after splash
+    // Don't redirect while checking auth status
+    if (isLoading) return;
+
+    // Auto-redirect based on auth status after splash
     const timer = setTimeout(() => {
-      navigate("/onboarding");
+      if (user) {
+        // User is logged in - redirect to appropriate page
+        if (isVerified) {
+          navigate("/map", { replace: true });
+        } else if (profile?.verification_status === 'pending' ||
+                   profile?.verification_status === 'manual_review' ||
+                   profile?.verification_status === 'blocked') {
+          navigate("/verification", { replace: true });
+        } else {
+          navigate("/map", { replace: true });
+        }
+      } else {
+        // User not logged in - go to onboarding
+        navigate("/onboarding", { replace: true });
+      }
     }, 2500);
 
     return () => clearTimeout(timer);
-  }, [navigate]);
+  }, [navigate, user, isLoading, isVerified, profile]);
 
   return (
     <div className="min-h-screen bg-navy flex flex-col items-center justify-center">

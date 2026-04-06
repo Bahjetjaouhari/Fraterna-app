@@ -204,6 +204,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       markOffline();
     };
 
+    // Mark user as online when they return to the tab
+    const markOnline = async () => {
+      if (user?.id) {
+        try {
+          await supabase.from('profiles').update({ is_online: true }).eq('id', user.id);
+        } catch (err) {
+          console.error('Error marking user online:', err);
+        }
+      }
+    };
+
     // Handle visibility change (tab switch, minimize, etc.)
     const handleVisibilityChange = () => {
       if (document.visibilityState === 'hidden') {
@@ -214,16 +225,38 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             markOffline();
           }
         }, 30000); // 30 second delay
+      } else if (document.visibilityState === 'visible') {
+        // User returned to the tab - mark as online immediately
+        markOnline();
       }
     };
 
     window.addEventListener('beforeunload', handleBeforeUnload);
     document.addEventListener('visibilitychange', handleVisibilityChange);
 
+    // Handle bfcache (back-forward cache) restoration
+    // When browser restores page from cache, ensure auth state is correct
+    const handlePageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) {
+        // Page was restored from bfcache - refresh auth state
+        supabase.auth.getSession().then(({ data: { session } }) => {
+          setSession(session);
+          setUser(session?.user ?? null);
+          if (session?.user) {
+            fetchProfile(session.user.id);
+            // Mark user as online when returning from bfcache
+            supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
+          }
+        });
+      }
+    };
+    window.addEventListener('pageshow', handlePageShow);
+
     return () => {
       subscription.unsubscribe();
       window.removeEventListener('beforeunload', handleBeforeUnload);
       document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('pageshow', handlePageShow);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
