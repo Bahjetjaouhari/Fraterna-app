@@ -23,55 +23,79 @@ class FraternaMessagingService : FirebaseMessagingService() {
 
     companion object {
         private const val TAG = "FraternaFCM"
+
+        // Store the last token for access from JS
+        var lastToken: String? = null
+            private set
     }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
-        Log.d(TAG, "New FCM token received: $token")
-        // Token is automatically handled by Supabase on the JS side
-        // but we log it here for debugging
+        Log.d(TAG, "=== FCM TOKEN RECEIVED ===")
+        Log.d(TAG, "Token: $token")
+        lastToken = token
+
+        // Broadcast token to the app if it's running
+        try {
+            val intent = Intent("app.fraterna.beta.FCM_TOKEN").apply {
+                putExtra("token", token)
+                setPackage(packageName)
+            }
+            sendBroadcast(intent)
+            Log.d(TAG, "Token broadcast sent to app")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error broadcasting token: ${e.message}")
+        }
     }
 
     override fun onMessageReceived(remoteMessage: RemoteMessage) {
         super.onMessageReceived(remoteMessage)
-        Log.d(TAG, "Message received from: ${remoteMessage.from}")
-
-        // Check if message contains data payload
-        if (remoteMessage.data.isNotEmpty()) {
-            Log.d(TAG, "Message data payload: ${remoteMessage.data}")
-            handleDataMessage(remoteMessage)
-        }
+        Log.d(TAG, "=== MESSAGE RECEIVED ===")
+        Log.d(TAG, "From: ${remoteMessage.from}")
+        Log.d(TAG, "MessageId: ${remoteMessage.messageId}")
+        Log.d(TAG, "MessageType: ${remoteMessage.messageType}")
+        Log.d(TAG, "Data: ${remoteMessage.data}")
 
         // Check if message contains notification payload
         remoteMessage.notification?.let {
-            Log.d(TAG, "Message notification: ${it.title} - ${it.body}")
-            sendNotification(
-                title = it.title ?: "Fraterna",
-                body = it.body ?: "",
-                channelId = getChannelIdFromData(remoteMessage.data),
-                data = remoteMessage.data
-            )
+            Log.d(TAG, "Notification Title: ${it.title}")
+            Log.d(TAG, "Notification Body: ${it.body}")
+            Log.d(TAG, "Notification Channel: ${it.channelId}")
         }
+
+        // Always show notification - our service handles all states
+        handleRemoteMessage(remoteMessage)
     }
 
     /**
-     * Handle data-only messages (no notification payload)
-     * These are messages sent with data payload only from the server
+     * Handle remote message (both data and notification payloads)
      */
-    private fun handleDataMessage(remoteMessage: RemoteMessage) {
+    private fun handleRemoteMessage(remoteMessage: RemoteMessage) {
         val data = remoteMessage.data
-        val title = data["title"] ?: data["notification_title"] ?: "Fraterna"
-        val body = data["body"] ?: data["message"] ?: data["notification_body"] ?: ""
+        val notification = remoteMessage.notification
+
+        // Extract title and body from notification or data payload
+        val title = notification?.title
+            ?: data["title"]
+            ?: data["notification_title"]
+            ?: "Fraterna"
+
+        val body = notification?.body
+            ?: data["body"]
+            ?: data["message"]
+            ?: data["notification_body"]
+            ?: ""
+
         val channelId = getChannelIdFromData(data)
 
-        if (body.isNotEmpty()) {
-            sendNotification(
-                title = title,
-                body = body,
-                channelId = channelId,
-                data = data
-            )
-        }
+        Log.d(TAG, "Processing message - Title: $title, Body: $body, Channel: $channelId")
+
+        sendNotification(
+            title = title,
+            body = body,
+            channelId = channelId,
+            data = data
+        )
     }
 
     /**
@@ -95,6 +119,8 @@ class FraternaMessagingService : FirebaseMessagingService() {
         channelId: String,
         data: Map<String, String>
     ) {
+        Log.d(TAG, "sendNotification called - title: $title, body: $body, channel: $channelId")
+
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP)
             addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
@@ -102,6 +128,9 @@ class FraternaMessagingService : FirebaseMessagingService() {
             data.forEach { (key, value) ->
                 putExtra(key, value)
             }
+            putExtra("from_fcm", true)
+            putExtra("notification_title", title)
+            putExtra("notification_body", body)
         }
 
         val requestCode = System.currentTimeMillis().toInt()
@@ -145,8 +174,14 @@ class FraternaMessagingService : FirebaseMessagingService() {
 
         // Use unique notification ID based on timestamp or message ID
         val notificationId = data["message_id"]?.hashCode() ?: System.currentTimeMillis().toInt()
-        notificationManager.notify(notificationId, notificationBuilder.build())
 
-        Log.d(TAG, "Notification displayed: $title - $body (channel: $channelId)")
+        try {
+            notificationManager.notify(notificationId, notificationBuilder.build())
+            Log.d(TAG, "=== NOTIFICATION DISPLAYED SUCCESSFULLY ===")
+            Log.d(TAG, "NotificationId: $notificationId, Title: $title, Channel: $channelId")
+        } catch (e: Exception) {
+            Log.e(TAG, "Error displaying notification: ${e.message}")
+            e.printStackTrace()
+        }
     }
 }

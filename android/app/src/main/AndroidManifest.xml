@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8" ?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
@@ -44,13 +45,21 @@
             android:foregroundServiceType="location" />
 
         <!-- Firebase Messaging Service - handles notifications in all app states -->
+        <!-- Priority 1000 to override Capacitor's FCM service -->
         <service
-            android:name=".FraternaMessagingService"
-            android:exported="false">
-            <intent-filter>
+            android:name="app.fraterna.beta.FraternaMessagingService"
+            android:exported="false"
+            android:enabled="true">
+            <intent-filter android:priority="1000">
                 <action android:name="com.google.firebase.MESSAGING_EVENT" />
             </intent-filter>
         </service>
+
+        <!-- DISABLE Capacitor's FCM service - we use our own -->
+        <service
+            android:name="com.capacitorjs.plugins.pushnotifications.MessagingService"
+            android:enabled="false"
+            tools:replace="android:enabled" />
     </application>
 
     <!-- Permissions -->
