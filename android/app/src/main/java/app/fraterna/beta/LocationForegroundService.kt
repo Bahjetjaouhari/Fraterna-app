@@ -303,18 +303,56 @@ class LocationForegroundService : Service() {
     }
 
     private fun checkProximityAlerts(location: Location) {
-        val settings = profileSettings ?: return
-        if (!settings.proximityAlertsEnabled) return
-        if (settings.proximityRadiusKm <= 0) return
-
+        val settings = profileSettings
         val userId = currentUserId ?: return
         val token = bearerToken ?: return
         val myLat = location.latitude
         val myLng = location.longitude
-        val radiusKm = settings.proximityRadiusKm
 
         serviceScope.launch {
             try {
+                // First, reload profile settings to get latest values
+                val settingsRequest = Request.Builder()
+                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled")
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("apikey", supabaseAnonKey)
+                    .get()
+                    .build()
+
+                val settingsResponse = httpClient.newCall(settingsRequest).execute()
+                var alertsEnabled = settings?.proximityAlertsEnabled ?: true
+                var radiusKm = settings?.proximityRadiusKm ?: 5.0
+
+                if (settingsResponse.isSuccessful) {
+                    val settingsBody = settingsResponse.body?.string()
+                    if (!settingsBody.isNullOrEmpty()) {
+                        val settingsArray = org.json.JSONArray(settingsBody)
+                        if (settingsArray.length() > 0) {
+                            val profileObj = settingsArray.getJSONObject(0)
+                            alertsEnabled = profileObj.optBoolean("proximity_alerts_enabled", true)
+                            radiusKm = profileObj.optDouble("proximity_radius_km", 5.0)
+
+                            // Update cached settings
+                            profileSettings = ProfileSettings(
+                                proximityRadiusKm = radiusKm,
+                                proximityAlertsEnabled = alertsEnabled
+                            )
+
+                            android.util.Log.d("LocationService", "Settings refreshed: alertsEnabled=$alertsEnabled, radiusKm=$radiusKm")
+                        }
+                    }
+                }
+
+                // Check if alerts are disabled
+                if (!alertsEnabled) {
+                    android.util.Log.d("LocationService", "Proximity alerts disabled in settings, skipping")
+                    return@launch
+                }
+                if (radiusKm <= 0) {
+                    android.util.Log.d("LocationService", "Proximity radius is 0, skipping")
+                    return@launch
+                }
+
                 // Fetch nearby users with their locations
                 // We need users who:
                 // 1. Are not the current user
