@@ -10,6 +10,7 @@ interface PushMessage {
   token: string
   title: string
   body: string
+  type: string
   data?: Record<string, string>
 }
 
@@ -133,7 +134,7 @@ async function sendFCMMessage(message: PushMessage): Promise<{ success: boolean;
             android: {
               priority: 'high',
               notification: {
-                channel_id: getChannelId(type),
+                channel_id: getChannelId(message.type),
                 sound: 'default',
                 default_sound: true,
                 default_vibrate_timings: true,
@@ -224,6 +225,7 @@ serve(async (req) => {
             token: user.push_token,
             title: '🚨 Alerta de Emergencia',
             body: `${senderName}: ${message}`,
+            type: 'emergency_message',
             data: {
               type: 'emergency_message',
               city: city || '',
@@ -267,6 +269,7 @@ serve(async (req) => {
             token: user.push_token,
             title: '💬 Chat Global',
             body: `${senderName}: ${messagePreview}`,
+            type: 'global_message',
             data: {
               type: 'global_message',
               sender_id: user_id,
@@ -306,6 +309,7 @@ serve(async (req) => {
           token: recipient.push_token,
           title: '👋 Nueva solicitud de amistad',
           body: `${senderName} quiere ser tu amigo`,
+          type: 'friend_request',
           data: {
             type: 'friend_request',
             sender_id: from_user_id,
@@ -346,6 +350,7 @@ serve(async (req) => {
           token: requester.push_token,
           title: '✅ Solicitud aceptada',
           body: `${accepterName} aceptó tu solicitud de amistad`,
+          type: 'friend_accepted',
           data: {
             type: 'friend_accepted',
             sender_id: from_user_id,
@@ -375,6 +380,7 @@ serve(async (req) => {
         token: token,
         title: title || '🧪 Test de Notificación',
         body: body || 'Si ves esto, las notificaciones funcionan correctamente',
+        type: 'test',
         data: {
           type: 'test',
         },

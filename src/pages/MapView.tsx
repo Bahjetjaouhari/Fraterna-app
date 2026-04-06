@@ -48,7 +48,7 @@ interface BrotherLocation {
     location_visibility_mode?: "public" | "friends" | "friends_selected";
     photo_url?: string;
     last_seen_at?: string | null;
-    is_online?: boolean;
+    last_heartbeat_at?: string | null; // Timestamp for online status
   };
 }
 
@@ -57,6 +57,15 @@ type VisibilityMode = "public" | "friends" | "friends_selected";
 const normalizeVisibilityMode = (v: unknown): VisibilityMode => {
   if (v === "public" || v === "friends" || v === "friends_selected") return v;
   return "friends";
+};
+
+// Check if user is online based on heartbeat (within last 2 minutes)
+const isUserOnline = (lastHeartbeat: string | null | undefined): boolean => {
+  if (!lastHeartbeat) return false;
+  const heartbeatTime = new Date(lastHeartbeat).getTime();
+  const now = Date.now();
+  // User is online if heartbeat is within last 2 minutes
+  return (now - heartbeatTime) < 120000; // 120000ms = 2 minutes
 };
 
 /**
@@ -252,7 +261,7 @@ export const MapView: React.FC = () => {
   }, [brothers]);
 
   // ✅ NUEVO (mínimo): QH cerca REAL (distancia + radio + tu ubicación)
-  // Solo cuenta QH ACTIVOS (is_online + tracking_enabled + no stealth_mode)
+  // Solo cuenta QH ACTIVOS (heartbeat reciente + tracking_enabled + no stealth_mode)
   const nearbyBrothersCount = useMemo(() => {
     // Si no hay perfil o no hay ubicación actual, no podemos calcular cercanía real
     if (!profile) return 0;
@@ -266,8 +275,8 @@ export const MapView: React.FC = () => {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue; // doble seguro
 
-      // Usuario activo: is_online=true AND tracking_enabled=true AND stealth_mode=false
-      const isActive = b.profile?.is_online === true &&
+      // Usuario activo: heartbeat reciente AND tracking_enabled AND no stealth_mode
+      const isActive = isUserOnline(b.profile?.last_heartbeat_at) &&
                        b.profile?.tracking_enabled !== false &&
                        b.profile?.stealth_mode !== true;
       if (!isActive) continue;
@@ -452,7 +461,7 @@ export const MapView: React.FC = () => {
              location_visibility_mode,
              photo_url,
              last_seen_at,
-             is_online
+             last_heartbeat_at
            )`
         )
         .neq("user_id", user.id);
@@ -698,9 +707,9 @@ export const MapView: React.FC = () => {
         isNearby = distKm < 1;
       }
 
-      // Determine active status: active if is_online=true AND tracking_enabled=true AND stealth_mode=false
+      // Determine active status: active if heartbeat is recent AND tracking_enabled AND no stealth_mode
       // Shows green if user has active session, red if manually logged out or disabled tracking
-      const isActive = b.profile?.is_online === true &&
+      const isActive = isUserOnline(b.profile?.last_heartbeat_at) &&
                        b.profile?.tracking_enabled !== false &&
                        b.profile?.stealth_mode !== true;
 

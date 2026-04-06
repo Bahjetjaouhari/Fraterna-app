@@ -8,8 +8,8 @@ android {
         applicationId "app.fraterna.beta"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 26
-        versionName "3.2"
+        versionCode 27
+        versionName "3.3"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
@@ -48,6 +48,9 @@ dependencies {
 
     // Google Play Services Location
     implementation 'com.google.android.gms:play-services-location:21.3.0'
+
+    // OkHttp for HTTP requests (heartbeat)
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
 }
 
 apply from: 'capacitor.build.gradle'

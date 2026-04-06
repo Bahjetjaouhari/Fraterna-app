@@ -1,4 +1,4 @@
-import { useState, useEffect, createContext, useContext, ReactNode } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode, useRef } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
@@ -22,10 +22,10 @@ interface Profile {
   proximity_radius_km?: number;
   proximity_alerts_enabled?: boolean;
   last_seen_at: string | null;
+  last_heartbeat_at: string | null; // Timestamp for online status (heartbeat)
   created_at: string;
   updated_at: string;
   is_active?: boolean;
-  is_online?: boolean;
   current_device_id?: string | null;
 }
 
@@ -53,6 +53,11 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
+// Heartbeat interval in milliseconds (30 seconds)
+const HEARTBEAT_INTERVAL = 30000;
+// User is considered offline after this many milliseconds without heartbeat (2 minutes)
+const OFFLINE_THRESHOLD = 120000;
+
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -60,6 +65,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [roles, setRoles] = useState<UserRole[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isForcingLogin, setIsForcingLogin] = useState(false);
+  const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const isSendingHeartbeatRef = useRef(false);
 
   const forceLogoutBannedUser = async () => {
     await supabase.auth.signOut();
@@ -89,6 +96,47 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         localStorage.setItem(storageKey, deviceId);
       }
       return deviceId;
+    }
+  };
+
+  // Send heartbeat to update last_heartbeat_at timestamp
+  const sendHeartbeat = async (userId: string) => {
+    if (isSendingHeartbeatRef.current) return;
+    isSendingHeartbeatRef.current = true;
+
+    try {
+      await supabase
+        .from('profiles')
+        .update({ last_heartbeat_at: new Date().toISOString() })
+        .eq('id', userId);
+    } catch (error) {
+      console.error('Heartbeat error:', error);
+    } finally {
+      isSendingHeartbeatRef.current = false;
+    }
+  };
+
+  // Start heartbeat interval
+  const startHeartbeat = (userId: string) => {
+    // Send initial heartbeat
+    sendHeartbeat(userId);
+
+    // Clear existing interval if any
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+    }
+
+    // Set up interval for subsequent heartbeats
+    heartbeatIntervalRef.current = setInterval(() => {
+      sendHeartbeat(userId);
+    }, HEARTBEAT_INTERVAL);
+  };
+
+  // Stop heartbeat interval
+  const stopHeartbeat = () => {
+    if (heartbeatIntervalRef.current) {
+      clearInterval(heartbeatIntervalRef.current);
+      heartbeatIntervalRef.current = null;
     }
   };
 
@@ -156,8 +204,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       setUser(session?.user ?? null);
       if (session?.user) {
         fetchProfile(session.user.id);
-        // Mark user as online when session is restored
-        supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
+        // Start heartbeat when session is restored
+        startHeartbeat(session.user.id);
       }
       setIsLoading(false);
     });
@@ -169,92 +217,50 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         if (session?.user) {
           setTimeout(() => fetchProfile(session.user.id), 100);
-          // Mark user as online when they log in
-          supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
+          // Start heartbeat when user logs in
+          startHeartbeat(session.user.id);
         } else {
           setProfile(null);
           setRoles([]);
+          stopHeartbeat();
         }
 
         setIsLoading(false);
       }
     );
 
-    // Mark user as offline when app closes (web and mobile)
-    const markOffline = async () => {
-      if (user?.id) {
-        try {
-          // Use sendBeacon for reliable delivery on page close
-          const url = `https://vzlbvknauwvrqwpvtaqe.supabase.co/rest/v1/profiles?id=eq.${user.id}`;
-          const data = JSON.stringify({ is_online: false });
-
-          // Try sendBeacon first (more reliable for page close)
-          if (navigator.sendBeacon) {
-            const blob = new Blob([data], { type: 'application/json' });
-            navigator.sendBeacon(url, blob);
-          }
-        } catch (err) {
-          console.error('Error marking user offline:', err);
-        }
-      }
-    };
-
-    // Handle app close/refresh
-    const handleBeforeUnload = () => {
-      markOffline();
-    };
-
-    // Mark user as online when they return to the tab
-    const markOnline = async () => {
-      if (user?.id) {
-        try {
-          await supabase.from('profiles').update({ is_online: true }).eq('id', user.id);
-        } catch (err) {
-          console.error('Error marking user online:', err);
-        }
-      }
-    };
-
-    // Handle visibility change (tab switch, minimize, etc.)
+    // Handle visibility change - send heartbeat immediately when returning to tab
     const handleVisibilityChange = () => {
-      if (document.visibilityState === 'hidden') {
-        // User switched away - mark as offline after a delay
-        // This prevents marking offline on quick tab switches
-        setTimeout(() => {
-          if (document.visibilityState === 'hidden') {
-            markOffline();
-          }
-        }, 30000); // 30 second delay
-      } else if (document.visibilityState === 'visible') {
-        // User returned to the tab - mark as online immediately
-        markOnline();
+      if (document.visibilityState === 'visible' && user?.id) {
+        // User returned to the tab - send heartbeat immediately
+        sendHeartbeat(user.id);
       }
+      // NOTE: We do NOT stop heartbeat when hidden because:
+      // - The foreground service keeps location updating
+      // - User should stay active even when app is in background
     };
-
-    window.addEventListener('beforeunload', handleBeforeUnload);
-    document.addEventListener('visibilitychange', handleVisibilityChange);
 
     // Handle bfcache (back-forward cache) restoration
-    // When browser restores page from cache, ensure auth state is correct
     const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted) {
-        // Page was restored from bfcache - refresh auth state
+      if (event.persisted && user?.id) {
+        // Page was restored from bfcache - refresh auth state and restart heartbeat
         supabase.auth.getSession().then(({ data: { session } }) => {
           setSession(session);
           setUser(session?.user ?? null);
           if (session?.user) {
             fetchProfile(session.user.id);
-            // Mark user as online when returning from bfcache
-            supabase.from('profiles').update({ is_online: true }).eq('id', session.user.id).then();
+            startHeartbeat(session.user.id);
           }
         });
       }
     };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
     window.addEventListener('pageshow', handlePageShow);
 
     return () => {
       subscription.unsubscribe();
-      window.removeEventListener('beforeunload', handleBeforeUnload);
+      stopHeartbeat();
       document.removeEventListener('visibilitychange', handleVisibilityChange);
       window.removeEventListener('pageshow', handlePageShow);
     };
@@ -283,14 +289,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       if (force) {
         setIsForcingLogin(true);
       }
-      
+
       const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-      
+
       if (error) {
         setIsForcingLogin(false);
         throw error;
       }
-      
+
       if (data?.user) {
         // Enforce Single Device Lock
         const { data: profileCheck } = await supabase
@@ -312,9 +318,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // @ts-expect-error missing column in generated types
         await supabase.from('profiles').update({ current_device_id: localDeviceId }).eq('id', data.user.id);
 
-        // Mark user as online
-        // @ts-expect-error missing column in generated types
-        await supabase.from('profiles').update({ is_online: true }).eq('id', data.user.id);
+        // Start heartbeat on login
+        startHeartbeat(data.user.id);
 
         if (force) {
           // Ya se actualizó en BD, podemos quitar la bandera y recargar
@@ -331,22 +336,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
-    // Mark user as offline and clear session data before closing session
+    // Stop heartbeat and clear session data
+    stopHeartbeat();
+
     if (user?.id) {
       try {
-        // eslint-disable-next-line @typescript-eslint/ban-ts-comment
-        // @ts-ignore
+        // Clear heartbeat timestamp and device ID on logout
         const { error } = await supabase.from('profiles').update({
-          last_seen_at: null,
+          last_heartbeat_at: null,
           current_device_id: null,
-          is_online: false
         }).eq('id', user.id);
 
         if (error) {
-          console.error('Error marking user as offline:', error);
+          console.error('Error clearing user session data:', error);
         }
       } catch (err) {
-        console.error('Exception marking user as offline:', err);
+        console.error('Exception clearing user session data:', err);
       }
     }
     await supabase.auth.signOut();

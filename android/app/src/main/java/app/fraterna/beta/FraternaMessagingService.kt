@@ -25,8 +25,9 @@ class FraternaMessagingService : FirebaseMessagingService() {
         private const val TAG = "FraternaFCM"
 
         // Store the last token for access from JS
+        @Volatile
         var lastToken: String? = null
-            private set
+            internal set
     }
 
     override fun onNewToken(token: String) {
