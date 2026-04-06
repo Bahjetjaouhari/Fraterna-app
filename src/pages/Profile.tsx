@@ -121,6 +121,14 @@ export const Profile: React.FC = () => {
     profile?.proximity_alerts_enabled ?? true
   );
 
+  // Sync state with profile changes
+  useEffect(() => {
+    if (profile) {
+      setProximityRadius(profile.proximity_radius_km ?? 5);
+      setNotificationsEnabled(profile.proximity_alerts_enabled ?? true);
+    }
+  }, [profile?.proximity_radius_km, profile?.proximity_alerts_enabled]);
+
   const loadFriendsAndAllowlist = useCallback(async () => {
     if (!user) return;
     setIsLoadingFriends(true);
