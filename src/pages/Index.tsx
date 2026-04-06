@@ -1,4 +1,4 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion } from "framer-motion";
 import { MasonicSymbol } from "@/components/icons/MasonicSymbol";
@@ -7,31 +7,38 @@ import { useAuth } from "@/hooks/useAuth";
 const Index: React.FC = () => {
   const navigate = useNavigate();
   const { user, isLoading, isVerified, profile } = useAuth();
+  const hasRedirected = useRef(false);
 
   useEffect(() => {
-    // Don't redirect while checking auth status
+    // Prevent multiple redirects
+    if (hasRedirected.current) return;
+
+    // Wait for auth to finish loading
     if (isLoading) return;
 
-    // Auto-redirect based on auth status after splash
-    const timer = setTimeout(() => {
-      if (user) {
-        // User is logged in - redirect to appropriate page
-        if (isVerified) {
-          navigate("/map", { replace: true });
-        } else if (profile?.verification_status === 'pending' ||
-                   profile?.verification_status === 'manual_review' ||
-                   profile?.verification_status === 'blocked') {
-          navigate("/verification", { replace: true });
-        } else {
-          navigate("/map", { replace: true });
-        }
-      } else {
-        // User not logged in - go to onboarding
-        navigate("/onboarding", { replace: true });
-      }
-    }, 2500);
+    // Mark as redirected to prevent double navigation
+    hasRedirected.current = true;
 
-    return () => clearTimeout(timer);
+    // Redirect immediately based on auth status (no splash delay for returning users)
+    if (user) {
+      // User is logged in - redirect to appropriate page
+      if (isVerified) {
+        navigate("/map", { replace: true });
+      } else if (profile?.verification_status === 'pending' ||
+                 profile?.verification_status === 'manual_review' ||
+                 profile?.verification_status === 'blocked') {
+        navigate("/verification", { replace: true });
+      } else {
+        navigate("/map", { replace: true });
+      }
+    } else {
+      // User not logged in - show splash for 2.5s then go to onboarding
+      const timer = setTimeout(() => {
+        navigate("/onboarding", { replace: true });
+      }, 2500);
+
+      return () => clearTimeout(timer);
+    }
   }, [navigate, user, isLoading, isVerified, profile]);
 
   return (

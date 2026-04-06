@@ -10,7 +10,19 @@ interface NavItem {
   path: string;
   adminOnly?: boolean;
   emergencyOnly?: boolean;
-  badge?: number;
+  unreadKey?: 'global' | 'emergency';
+}
+
+interface BottomNavProps {
+  isAdmin?: boolean;
+}
+
+interface NavItem {
+  icon: React.ElementType;
+  label: string;
+  path: string;
+  adminOnly?: boolean;
+  emergencyOnly?: boolean;
   unreadKey?: 'global' | 'emergency';
 }
 
@@ -24,12 +36,10 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
 
   // Regla: Emergencia solo aparece si hay >= 1 QH cerca (según MapView)
   const [emergencyAvailable, setEmergencyAvailable] = useState(false);
-  const [emergencyCount, setEmergencyCount] = useState(0);
 
   useEffect(() => {
     const onNearbyCount = (e: Event) => {
       const count = (e as CustomEvent<number>).detail ?? 0;
-      setEmergencyCount(count);
       setEmergencyAvailable(count > 0);
     };
 
@@ -49,13 +59,12 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
         label: "Emergencia",
         path: "/emergency/chat",
         emergencyOnly: true,
-        badge: emergencyCount,
         unreadKey: 'emergency',
       },
       { icon: User, label: "Perfil", path: "/profile" },
       { icon: Shield, label: "Admin", path: "/admin", adminOnly: true },
     ],
-    [emergencyCount, counts]
+    [counts]
   );
 
   const visibleItems = navItems.filter((item) => {
@@ -64,13 +73,8 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     return true;
   });
 
-  // Obtener badge para cada item
+  // Obtener badge para cada item (solo mensajes no leídos)
   const getBadgeCount = (item: NavItem): number | undefined => {
-    // Badge de cercanía para emergencia
-    if (item.emergencyOnly && typeof item.badge === 'number' && item.badge > 0) {
-      return item.badge;
-    }
-    // Badge de mensajes no leídos
     if (item.unreadKey === 'global' && counts.global > 0) {
       return counts.global;
     }
