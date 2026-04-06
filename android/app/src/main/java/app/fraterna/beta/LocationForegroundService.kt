@@ -347,15 +347,39 @@ class LocationForegroundService : Service() {
                             val profileObj = locationObj.optJSONObject("profile")
                             if (profileObj == null) continue
 
-                            // Skip if stealth_mode is true
-                            if (profileObj.optBoolean("stealth_mode", false)) continue
+                            // Skip if stealth_mode is true (ghost mode)
+                            if (profileObj.optBoolean("stealth_mode", false)) {
+                                android.util.Log.d("LocationService", "Skipping user in ghost mode")
+                                continue
+                            }
 
                             // Skip if tracking_enabled is false
-                            if (!profileObj.optBoolean("tracking_enabled", true)) continue
+                            if (!profileObj.optBoolean("tracking_enabled", true)) {
+                                android.util.Log.d("LocationService", "Skipping user with tracking disabled")
+                                continue
+                            }
 
                             // Check heartbeat (within last 2 minutes = online)
                             val lastHeartbeat = profileObj.optString("last_heartbeat_at", null)
-                            if (lastHeartbeat.isNullOrEmpty()) continue
+                            if (lastHeartbeat.isNullOrEmpty()) {
+                                android.util.Log.d("LocationService", "Skipping user with no heartbeat")
+                                continue
+                            }
+
+                            // Verify heartbeat is recent (within 2 minutes)
+                            try {
+                                val heartbeatTime = java.time.Instant.parse(lastHeartbeat).toEpochMilli()
+                                val now = System.currentTimeMillis()
+                                val twoMinutesAgo = now - (2 * 60 * 1000)
+
+                                if (heartbeatTime < twoMinutesAgo) {
+                                    android.util.Log.d("LocationService", "Skipping inactive user (heartbeat too old)")
+                                    continue
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("LocationService", "Error parsing heartbeat: ${e.message}")
+                                continue
+                            }
 
                             // Calculate distance
                             val distance = haversineDistance(myLat, myLng, lat, lng)
