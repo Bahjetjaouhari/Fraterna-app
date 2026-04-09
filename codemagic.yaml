@@ -8,10 +8,8 @@ workflows:
       xcode: latest
       cocoapods: default
       vars:
-        - name: CM_CERTIFICATE
-          value: "fraterna_distribution.p12"
-        - name: CM_CERTIFICATE_PASSWORD
-          value: "fraterna2024"
+        - name: TEAM_ID
+          value: "VL56K2J6DB"
     scripts:
       - name: Install Node dependencies
         script: |
@@ -22,10 +20,12 @@ workflows:
       - name: Sync Capacitor
         script: |
           npx cap sync ios
-      - name: Set up code signing
+      - name: Configure Xcode project for manual signing
         script: |
-          # Codemagic automatically sets up signing from uploaded profiles
-          # Print available profiles for debugging
+          cd ios/App
+          # Update project settings for manual signing
+          xcodebuild -showBuildSettings -project App.xcodeproj -scheme App
+          # Print available provisioning profiles
           ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ || true
       - name: Build iOS Release
         script: |
@@ -39,8 +39,8 @@ workflows:
             archive \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM="VL56K2J6DB" \
             PROVISIONING_PROFILE_SPECIFIER="Fraterna_AppStore" \
-            DEVELOPMENT_TEAM="" \
             -allowProvisioningUpdates
       - name: Export IPA
         script: |
@@ -54,7 +54,7 @@ workflows:
               <key>method</key>
               <string>app-store</string>
               <key>teamID</key>
-              <string></string>
+              <string>VL56K2J6DB</string>
               <key>uploadSymbols</key>
               <true/>
               <key>compileBitcode</key>
