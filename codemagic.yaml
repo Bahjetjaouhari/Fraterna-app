@@ -1,6 +1,6 @@
 workflows:
-  ios-build:
-    name: Fraterna iOS Build
+  ios-release:
+    name: Fraterna iOS Release
     max_build_duration: 60
     instance_type: mac_mini_m2
     environment:
@@ -17,12 +17,27 @@ workflows:
       - name: Sync Capacitor
         script: |
           npx cap sync ios
-      - name: Set up code signing (debug)
+      - name: Build iOS Release
         script: |
-          xcodebuild -project ios/App/App.xcodeproj -scheme App -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+          cd ios/App
+          xcodebuild -project App.xcodeproj \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Release \
+            -archivePath build/App.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            CODE_SIGN_STYLE=Manual
+      - name: Export IPA
+        script: |
+          cd ios/App
+          mkdir -p build/Payload
+          cp -r build/App.xcarchive/Products/Applications/App.app build/Payload/
+          cd build
+          zip -r App.ipa Payload
     artifacts:
-      - ios/App/build/**/*.app
-      - ios/App/build/**/*.ipa
+      - ios/App/build/*.ipa
     publishing:
       email:
         recipients:
@@ -30,3 +45,7 @@ workflows:
         notify:
           success: true
           failure: true
+      app_store_connect:
+        api_key: $APP_STORE_CONNECT_API_KEY
+        key_id: $APP_STORE_CONNECT_KEY_ID
+        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
