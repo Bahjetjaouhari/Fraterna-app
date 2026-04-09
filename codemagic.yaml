@@ -7,9 +7,6 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
-      vars:
-        - name: TEAM_ID
-          value: "VL56K2J6DB"
     scripts:
       - name: Install Node dependencies
         script: |
@@ -20,32 +17,10 @@ workflows:
       - name: Sync Capacitor
         script: |
           npx cap sync ios
-      - name: Configure Xcode project for manual signing
+      - name: Create export options
         script: |
           cd ios/App
-          # Update project settings for manual signing
-          xcodebuild -showBuildSettings -project App.xcodeproj -scheme App
-          # Print available provisioning profiles
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ || true
-      - name: Build iOS Release
-        script: |
-          cd ios/App
-          # Archive for App Store distribution
-          xcodebuild -project App.xcodeproj \
-            -scheme App \
-            -sdk iphoneos \
-            -configuration Release \
-            -archivePath build/App.xcarchive \
-            archive \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM="VL56K2J6DB" \
-            PROVISIONING_PROFILE_SPECIFIER="Fraterna_AppStore" \
-            -allowProvisioningUpdates
-      - name: Export IPA
-        script: |
-          cd ios/App
-          # Create export options plist
+          mkdir -p build
           cat > build/export_options.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -62,7 +37,22 @@ workflows:
           </dict>
           </plist>
           EOF
-          # Export IPA
+      - name: Set up code signing from Codemagic
+        script: |
+          # Use Codemagic's built-in code signing setup
+          xcode-project use-profiles
+      - name: Build iOS Release
+        script: |
+          cd ios/App
+          xcodebuild -project App.xcodeproj \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Release \
+            archive \
+            -archivePath build/App.xcarchive
+      - name: Export IPA
+        script: |
+          cd ios/App
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/export \
