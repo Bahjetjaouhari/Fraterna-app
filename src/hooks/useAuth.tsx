@@ -54,9 +54,9 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Heartbeat interval in milliseconds (30 seconds)
+// Heartbeat is sent to track last activity time, but user is considered online
+// as long as last_heartbeat_at is not null (only cleared on explicit logout)
 const HEARTBEAT_INTERVAL = 30000;
-// User is considered offline after this many milliseconds without heartbeat (2 minutes)
-const OFFLINE_THRESHOLD = 120000;
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<User | null>(null);

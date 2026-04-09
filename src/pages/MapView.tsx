@@ -59,13 +59,11 @@ const normalizeVisibilityMode = (v: unknown): VisibilityMode => {
   return "friends";
 };
 
-// Check if user is online based on heartbeat (within last 2 minutes)
+// Check if user is online based on heartbeat
+// User is considered online if they have a heartbeat (app installed and logged in)
+// Only goes offline when explicitly logging out (which clears last_heartbeat_at)
 const isUserOnline = (lastHeartbeat: string | null | undefined): boolean => {
-  if (!lastHeartbeat) return false;
-  const heartbeatTime = new Date(lastHeartbeat).getTime();
-  const now = Date.now();
-  // User is online if heartbeat is within last 2 minutes
-  return (now - heartbeatTime) < 120000; // 120000ms = 2 minutes
+  return lastHeartbeat != null;
 };
 
 /**

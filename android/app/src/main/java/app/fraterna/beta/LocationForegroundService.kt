@@ -397,27 +397,14 @@ class LocationForegroundService : Service() {
                                 continue
                             }
 
-                            // Check heartbeat (within last 2 minutes = online)
+                            // Check heartbeat - user is online if they have a heartbeat (app installed and logged in)
                             val lastHeartbeat = profileObj.optString("last_heartbeat_at", null)
                             if (lastHeartbeat.isNullOrEmpty()) {
-                                android.util.Log.d("LocationService", "Skipping user with no heartbeat")
+                                android.util.Log.d("LocationService", "Skipping user with no heartbeat (not logged in)")
                                 continue
                             }
-
-                            // Verify heartbeat is recent (within 2 minutes)
-                            try {
-                                val heartbeatTime = java.time.Instant.parse(lastHeartbeat).toEpochMilli()
-                                val now = System.currentTimeMillis()
-                                val twoMinutesAgo = now - (2 * 60 * 1000)
-
-                                if (heartbeatTime < twoMinutesAgo) {
-                                    android.util.Log.d("LocationService", "Skipping inactive user (heartbeat too old)")
-                                    continue
-                                }
-                            } catch (e: Exception) {
-                                android.util.Log.e("LocationService", "Error parsing heartbeat: ${e.message}")
-                                continue
-                            }
+                            // User is considered online as long as last_heartbeat_at is not null
+                            // (only cleared on explicit logout)
 
                             // Calculate distance
                             val distance = haversineDistance(myLat, myLng, lat, lng)

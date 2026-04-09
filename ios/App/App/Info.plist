@@ -47,5 +47,24 @@
 	</array>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<true/>
+	<!-- Location Permissions -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Fraterna necesita tu ubicación para mostrar QH cercanos en el mapa y permitir contacto con otros hermanos.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>Fraterna necesita tu ubicación en segundo plano para alertarte cuando un QH esté cerca, incluso cuando la app no esté abierta.</string>
+	<key>NSLocationAlwaysUsageDescription</key>
+	<string>Fraterna necesita acceso continuo a tu ubicación para alertas de proximidad entre QH.</string>
+	<!-- Camera & Photo Permissions -->
+	<key>NSCameraUsageDescription</key>
+	<string>Fraterna necesita acceso a la cámara para tomar fotos y videos en el chat de emergencia.</string>
+	<key>NSPhotoLibraryUsageDescription</key>
+	<string>Fraterna necesita acceso a tu galería para compartir fotos y videos en el chat de emergencia.</string>
+	<!-- Background Modes -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>location</string>
+		<string>fetch</string>
+		<string>remote-notification</string>
+	</array>
 </dict>
 </plist>
