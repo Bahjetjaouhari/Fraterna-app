@@ -7,8 +7,6 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
-    ios_config:
-      bundle_identifier: app.fraterna.beta
     scripts:
       - name: Install Node dependencies
         script: |
@@ -22,6 +20,22 @@ workflows:
       - name: Setup code signing
         script: |
           xcode-project use-profiles
+      - name: Create export options
+        script: |
+          cd ios/App
+          mkdir -p build
+          cat > build/export_options.plist << 'EOF'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>app-store</string>
+              <key>teamID</key>
+              <string>VL56K2J6DB</string>
+          </dict>
+          </plist>
+          EOF
       - name: Build iOS
         script: |
           cd ios/App
