@@ -41,9 +41,12 @@ workflows:
         script: |
           # Use Codemagic's built-in code signing setup
           xcode-project use-profiles
-          # Print profiles for debugging
-          echo "Installed provisioning profiles:"
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ || true
+          # Debug: Show installed profiles
+          echo "=== Installed provisioning profiles ==="
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ || echo "No profiles directory"
+          # Debug: Show available signing identities
+          echo "=== Available signing identities ==="
+          security find-identity -v -p codesigning || true
       - name: Build iOS Release
         script: |
           cd ios/App
@@ -54,7 +57,7 @@ workflows:
             archive \
             -archivePath build/App.xcarchive \
             DEVELOPMENT_TEAM=VL56K2J6DB \
-            CODE_SIGN_STYLE=Automatic
+            -allowProvisioningUpdates
       - name: Export IPA
         script: |
           cd ios/App
