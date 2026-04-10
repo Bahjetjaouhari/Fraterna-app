@@ -21,33 +21,15 @@ workflows:
         script: npx cap sync ios
       - name: Set up code signing
         script: xcode-project use-profiles
-      - name: Build and export IPA
+      - name: Build IPA
         script: |
           cd ios/App
-          set -e
-
-          # Archive
-          xcodebuild -project App.xcodeproj \
-            -target App \
-            -sdk iphoneos \
-            -configuration Release \
-            -archivePath build/App.xcarchive \
-            archive \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=VL56K2J6DB \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            PROVISIONING_PROFILE_SPECIFIER="Fraterna_AppStore_New" \
-            PRODUCT_BUNDLE_IDENTIFIER=app.fraterna.beta
-
-          # Export IPA
-          xcodebuild -exportArchive \
-            -archivePath build/App.xcarchive \
-            -exportPath build/ipa \
-            -exportOptionsPlist ExportOptions.plist \
-            CODE_SIGN_STYLE=Manual \
-            DEVELOPMENT_TEAM=VL56K2J6DB
+          xcode-project build-ipa \
+            --project App.xcodeproj \
+            --target App \
+            --archive-flags "-destination 'generic/platform=iOS'"
     artifacts:
-      - ios/App/build/ipa/*.ipa
+      - build/ios/ipa/*.ipa
     publishing:
       email:
         recipients:
