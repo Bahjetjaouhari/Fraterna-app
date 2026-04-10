@@ -49,7 +49,7 @@ workflows:
     publishing:
       email:
         recipients:
-          - bahjetjaouhari@gmail.com
+          - inovaahora.tech@gmail.com
         notify:
           success: true
           failure: true
