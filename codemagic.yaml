@@ -9,9 +9,6 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
-      ios_signing:
-        distribution_type: app_store
-        bundle_identifier: app.fraterna.beta
     scripts:
       - name: Install Node dependencies
         script: npm ci
@@ -19,6 +16,16 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
+      - name: Fetch signing files
+        script: |
+          # Fetch all signing files (certificates and profiles)
+          app-store-connect fetch-signing-files "app.fraterna.beta" \
+            --type IOS_APP_STORE \
+            --create
+      - name: Initialize keychain and add certificates
+        script: |
+          keychain initialize
+          keychain add-certificates
       - name: Set up code signing
         script: xcode-project use-profiles
       - name: Build IPA
@@ -26,8 +33,7 @@ workflows:
           cd ios/App
           xcode-project build-ipa \
             --project App.xcodeproj \
-            --target App \
-            --archive-xcargs "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=VL56K2J6DB"
+            --target App
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
