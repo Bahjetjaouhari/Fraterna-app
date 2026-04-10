@@ -3,15 +3,15 @@ workflows:
     name: Fraterna iOS Release
     max_build_duration: 60
     instance_type: mac_mini_m2
+    integrations:
+      app_store_connect: Codemagic  # Nombre de la API key en Codemagic Dashboard
     environment:
       node: latest
       xcode: latest
       cocoapods: default
-      groups:
-        - appstore_credentials
-      vars:
-        BUNDLE_ID: app.fraterna.beta
-        TEAM_ID: VL56K2J6DB
+      ios_signing:
+        distribution_type: app_store
+        bundle_identifier: app.fraterna.beta
     scripts:
       - name: Install Node dependencies
         script: npm ci
@@ -19,84 +19,17 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
-      - name: Prepare App Store Connect API key
+      - name: Set up code signing
+        script: xcode-project use-profiles
+      - name: Build IPA
         script: |
-          set -e
-
-          echo "=== Preparing App Store Connect API Key ==="
-          echo "Key ID: $APP_STORE_CONNECT_KEY_ID"
-          echo "Issuer ID: $APP_STORE_CONNECT_ISSUER_ID"
-
-          # Check if key content exists
-          if [ -z "$APP_STORE_CONNECT_KEY_CONTENT" ]; then
-            echo "ERROR: APP_STORE_CONNECT_KEY_CONTENT is empty"
-            exit 1
-          fi
-
-          # Create directory
-          mkdir -p ~/.appstoreconnect/private_keys
-
-          # Decode and save the key
-          KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8
-          echo "$APP_STORE_CONNECT_KEY_CONTENT" | base64 --decode > "$KEY_PATH"
-
-          # Verify file was created
-          if [ -f "$KEY_PATH" ]; then
-            echo "✓ API key saved to: $KEY_PATH"
-            echo "File size: $(wc -c < "$KEY_PATH") bytes"
-          else
-            echo "ERROR: Failed to create API key file"
-            exit 1
-          fi
-      - name: Build iOS Archive
-        script: |
-          set -e
           cd ios/App
-
-          KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8
-
-          echo "=== Building iOS Archive ==="
-          echo "Key path: $KEY_PATH"
-          echo "Team ID: $TEAM_ID"
-          echo "Bundle ID: $BUNDLE_ID"
-
-          # Verify key file exists before build
-          if [ ! -f "$KEY_PATH" ]; then
-            echo "ERROR: API key file not found at $KEY_PATH"
-            exit 1
-          fi
-
-          # Build with automatic signing
-          xcodebuild -project App.xcodeproj \
-            -scheme App \
-            -sdk iphoneos \
-            -configuration Release \
-            -archivePath build/App.xcarchive \
-            archive \
-            -authenticationKeyPath "$KEY_PATH" \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            -allowProvisioningUpdates \
-            CODE_SIGN_IDENTITY="Apple Distribution" \
-            DEVELOPMENT_TEAM="$TEAM_ID" \
-            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
-      - name: Export IPA
-        script: |
-          set -e
-          cd ios/App
-
-          KEY_PATH=~/.appstoreconnect/private_keys/AuthKey_$APP_STORE_CONNECT_KEY_ID.p8
-
-          xcodebuild -exportArchive \
-            -archivePath build/App.xcarchive \
-            -exportPath build/ipa \
-            -exportOptionsPlist ExportOptions.plist \
-            -authenticationKeyPath "$KEY_PATH" \
-            -authenticationKeyID "$APP_STORE_CONNECT_KEY_ID" \
-            -authenticationKeyIssuerID "$APP_STORE_CONNECT_ISSUER_ID" \
-            -allowProvisioningUpdates
+          # Build the app - xcode-project handles schemes automatically
+          xcode-project build-ipa \
+            --project App.xcodeproj
     artifacts:
-      - ios/App/build/ipa/*.ipa
+      - build/ios/ipa/*.ipa
+      - /tmp/xcodebuild_logs/*.log
     publishing:
       email:
         recipients:
