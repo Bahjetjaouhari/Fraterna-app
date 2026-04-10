@@ -7,23 +7,30 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
+    ios_config:
+      bundle_identifier: app.fraterna.beta
+      code_signing:
+        distribution_type: app_store
     scripts:
       - name: Install Node dependencies
-        script: |
-          npm ci
+        script: npm ci
       - name: Build web assets
-        script: |
-          npm run build
+        script: npm run build
       - name: Sync Capacitor
-        script: |
-          npx cap sync ios
-      - name: Setup code signing
-        script: |
-          xcode-project use-profiles
-      - name: Create export options
+        script: npx cap sync ios
+      - name: Configure signing and build
         script: |
           cd ios/App
-          mkdir -p build
+          # Codemagic should auto-configure signing from uploaded profiles
+          xcodebuild -project App.xcodeproj \
+            -scheme App \
+            -sdk iphoneos \
+            -configuration Release \
+            archive \
+            -archivePath build/App.xcarchive
+      - name: Export IPA
+        script: |
+          cd ios/App
           cat > build/export_options.plist << 'EOF'
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -36,18 +43,6 @@ workflows:
           </dict>
           </plist>
           EOF
-      - name: Build iOS
-        script: |
-          cd ios/App
-          xcodebuild -project App.xcodeproj \
-            -scheme App \
-            -sdk iphoneos \
-            -configuration Release \
-            archive \
-            -archivePath build/App.xcarchive
-      - name: Export IPA
-        script: |
-          cd ios/App
           xcodebuild -exportArchive \
             -archivePath build/App.xcarchive \
             -exportPath build/export \
@@ -58,9 +53,6 @@ workflows:
       email:
         recipients:
           - bahjetjaouhari@gmail.com
-        notify:
-          success: true
-          failure: true
       app_store_connect:
         api_key: $APP_STORE_CONNECT_API_KEY
         key_id: $APP_STORE_CONNECT_KEY_ID
