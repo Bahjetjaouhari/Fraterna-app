@@ -7,10 +7,6 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
-    ios_config:
-      bundle_identifier: app.fraterna.beta
-      code_signing:
-        distribution_type: app_store
     scripts:
       - name: Install Node dependencies
         script: npm ci
@@ -18,42 +14,42 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
-      - name: Configure signing and build
+      - name: Debug - Show installed profiles
+        script: |
+          echo "=== Checking for provisioning profiles ==="
+          echo "Looking in ~/Library/MobileDevice/Provisioning Profiles/"
+          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "Directory does not exist or is empty"
+          echo ""
+          echo "=== Checking for certificates ==="
+          security find-identity -v -p codesigning || echo "No signing identities found"
+          echo ""
+          echo "=== Checking CM environment variables ==="
+          env | grep -i CM_ || echo "No CM_ variables found"
+          echo ""
+          echo "=== Checking KEYCHAIN ==="
+          security list-keychains || echo "No keychains listed"
+      - name: Build iOS (no signing for now)
         script: |
           cd ios/App
-          # Codemagic should auto-configure signing from uploaded profiles
+          # Build without signing first to test
           xcodebuild -project App.xcodeproj \
             -scheme App \
             -sdk iphoneos \
             -configuration Release \
-            archive \
-            -archivePath build/App.xcarchive
-      - name: Export IPA
+            CODE_SIGNING_ALLOWED=NO \
+            build
+      - name: Create unsigned IPA
         script: |
           cd ios/App
-          cat > build/export_options.plist << 'EOF'
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-              <key>method</key>
-              <string>app-store</string>
-              <key>teamID</key>
-              <string>VL56K2J6DB</string>
-          </dict>
-          </plist>
-          EOF
-          xcodebuild -exportArchive \
-            -archivePath build/App.xcarchive \
-            -exportPath build/export \
-            -exportOptionsPlist build/export_options.plist
+          mkdir -p Payload
+          cp -r build/Release-iphoneos/App.app Payload/
+          zip -r App.ipa Payload
     artifacts:
-      - ios/App/build/export/*.ipa
+      - ios/App/App.ipa
     publishing:
       email:
         recipients:
           - bahjetjaouhari@gmail.com
-      app_store_connect:
-        api_key: $APP_STORE_CONNECT_API_KEY
-        key_id: $APP_STORE_CONNECT_KEY_ID
-        issuer_id: $APP_STORE_CONNECT_ISSUER_ID
+        notify:
+          success: true
+          failure: true
