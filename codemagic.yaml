@@ -21,31 +21,42 @@ workflows:
         script: npx cap sync ios
       - name: Set up code signing
         script: xcode-project use-profiles
-      - name: Build IPA
+      - name: Build and create IPA
         script: |
           cd ios/App
           set -e
 
-          # Archive the app
+          # Build the app (not archive)
           xcodebuild -project App.xcodeproj \
             -target App \
             -sdk iphoneos \
             -configuration Release \
-            -archivePath build/App.xcarchive \
-            archive \
+            -derivedDataPath build/DerivedData \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=VL56K2J6DB \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="Fraterna_AppStore_New" \
             PRODUCT_BUNDLE_IDENTIFIER=app.fraterna.beta
 
-          # Export IPA
-          xcodebuild -exportArchive \
-            -archivePath build/App.xcarchive \
-            -exportPath build/ipa \
-            -exportOptionsPlist ExportOptions.plist
+          # Find the built app
+          APP_PATH=$(find build/DerivedData -path "*/Release-iphoneos/App.app" -type d | head -1)
 
-          echo "✓ IPA exported to build/ipa/"
+          if [ -z "$APP_PATH" ]; then
+            echo "✗ App.app not found"
+            exit 1
+          fi
+
+          echo "✓ Found App at: $APP_PATH"
+
+          # Create IPA
+          mkdir -p build/ipa
+          mkdir -p Payload
+          cp -R "$APP_PATH" Payload/
+          zip -r build/ipa/App.ipa Payload
+          rm -rf Payload
+
+          echo "✓ IPA created: build/ipa/App.ipa"
+          ls -la build/ipa/
     artifacts:
       - ios/App/build/ipa/*.ipa
     publishing:
