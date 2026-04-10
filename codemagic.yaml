@@ -38,7 +38,8 @@ workflows:
           cd ios/App
           xcode-project build-ipa \
             --project App.xcodeproj \
-            --target App
+            --target App \
+            --verbose
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
