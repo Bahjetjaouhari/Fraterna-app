@@ -7,8 +7,13 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
-      # Manual signing configuration
-      # Certificate and provisioning profile will be uploaded via Codemagic Dashboard
+      ios_signing:
+        # Reference the uploaded certificate and profile by name
+        # Replace 'fraterna_distribution' and 'fraterna_appstore' with your actual reference names
+        certificates:
+          - fraterna_distribution
+        provisioning_profiles:
+          - fraterna_appstore_new
     scripts:
       - name: Install Node dependencies
         script: npm ci
