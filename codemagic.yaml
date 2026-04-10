@@ -19,14 +19,6 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
-      - name: Debug - List available profiles
-        script: |
-          echo "=== Checking iOS signing configuration ==="
-          echo "Bundle ID: $IOS_SIGNING_BUNDLE_IDENTIFIER"
-          echo "Distribution Type: $IOS_SIGNING_DISTRIBUTION_TYPE"
-          echo ""
-          echo "=== Listing provisioning profiles directory ==="
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "Directory does not exist"
       - name: Set up code signing
         script: xcode-project use-profiles
       - name: Build IPA
@@ -34,7 +26,8 @@ workflows:
           cd ios/App
           xcode-project build-ipa \
             --project App.xcodeproj \
-            --target App
+            --target App \
+            --archive-xcargs "CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=VL56K2J6DB"
     artifacts:
       - build/ios/ipa/*.ipa
       - /tmp/xcodebuild_logs/*.log
