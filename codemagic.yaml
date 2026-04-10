@@ -26,12 +26,11 @@ workflows:
           cd ios/App
           set -e
 
-          # Build the app (not archive)
+          # Build the app (simple build, no archive, no derivedDataPath)
           xcodebuild -project App.xcodeproj \
             -target App \
             -sdk iphoneos \
             -configuration Release \
-            -derivedDataPath build/DerivedData \
             CODE_SIGN_STYLE=Manual \
             DEVELOPMENT_TEAM=VL56K2J6DB \
             CODE_SIGN_IDENTITY="Apple Distribution" \
@@ -39,10 +38,11 @@ workflows:
             PRODUCT_BUNDLE_IDENTIFIER=app.fraterna.beta
 
           # Find the built app
-          APP_PATH=$(find build/DerivedData -path "*/Release-iphoneos/App.app" -type d | head -1)
+          APP_PATH=$(find build/Release-iphoneos -name "App.app" -type d | head -1)
 
           if [ -z "$APP_PATH" ]; then
-            echo "✗ App.app not found"
+            echo "✗ App.app not found in build/Release-iphoneos"
+            ls -la build/ 2>/dev/null || echo "No build directory"
             exit 1
           fi
 
