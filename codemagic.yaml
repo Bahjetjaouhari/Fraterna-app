@@ -7,6 +7,11 @@ workflows:
       node: latest
       xcode: latest
       cocoapods: default
+      groups:
+        - appstore_credentials
+      vars:
+        BUNDLE_ID: app.fraterna.beta
+        TEAM_ID: VL56K2J6DB
     scripts:
       - name: Install Node dependencies
         script: npm ci
@@ -14,38 +19,50 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
-      - name: Debug - Show installed profiles
+      - name: Set up code signing
         script: |
-          echo "=== Checking for provisioning profiles ==="
-          echo "Looking in ~/Library/MobileDevice/Provisioning Profiles/"
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/ 2>/dev/null || echo "Directory does not exist or is empty"
-          echo ""
-          echo "=== Checking for certificates ==="
-          security find-identity -v -p codesigning || echo "No signing identities found"
-          echo ""
-          echo "=== Checking CM environment variables ==="
-          env | grep -i CM_ || echo "No CM_ variables found"
-          echo ""
-          echo "=== Checking KEYCHAIN ==="
-          security list-keychains || echo "No keychains listed"
-      - name: Build iOS (no signing for now)
+          # This script runs if App Store Connect API credentials are set
+          # Codemagic automatically sets up signing when these vars are present:
+          # - APP_STORE_CONNECT_KEY_ID
+          # - APP_STORE_CONNECT_ISSUER_ID
+          # - APP_STORE_CONNECT_KEY_CONTENT (base64)
+
+          if [ -z "$APP_STORE_CONNECT_KEY_ID" ]; then
+            echo "⚠️ App Store Connect API credentials not configured"
+            echo "Add these environment variables in Codemagic Settings:"
+            echo "  - APP_STORE_CONNECT_KEY_ID"
+            echo "  - APP_STORE_CONNECT_ISSUER_ID"
+            echo "  - APP_STORE_CONNECT_KEY_CONTENT"
+            exit 1
+          fi
+
+          echo "✓ App Store Connect API credentials found"
+          echo "Team ID: $TEAM_ID"
+          echo "Bundle ID: $BUNDLE_ID"
+      - name: Build iOS
         script: |
           cd ios/App
-          # Build without signing first to test
+
+          # Build with automatic signing
           xcodebuild -project App.xcodeproj \
             -scheme App \
             -sdk iphoneos \
             -configuration Release \
-            CODE_SIGNING_ALLOWED=NO \
-            build
-      - name: Create unsigned IPA
+            -archivePath build/App.xcarchive \
+            archive \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            DEVELOPMENT_TEAM="$TEAM_ID" \
+            PRODUCT_BUNDLE_IDENTIFIER="$BUNDLE_ID"
+      - name: Export IPA
         script: |
           cd ios/App
-          mkdir -p Payload
-          cp -r build/Release-iphoneos/App.app Payload/
-          zip -r App.ipa Payload
+
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/ipa \
+            -exportOptionsPlist ExportOptions.plist
     artifacts:
-      - ios/App/App.ipa
+      - ios/App/build/ipa/*.ipa
     publishing:
       email:
         recipients:
