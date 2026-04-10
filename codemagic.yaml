@@ -13,7 +13,7 @@ workflows:
         certificates:
           - fraterna_distribution
         provisioning_profiles:
-          - fraterna_appstore_new
+          - Fraterna_AppStore_New
     scripts:
       - name: Install Node dependencies
         script: npm ci
