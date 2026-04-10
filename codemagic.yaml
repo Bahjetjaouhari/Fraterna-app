@@ -8,8 +8,6 @@ workflows:
       xcode: latest
       cocoapods: default
       ios_signing:
-        # Reference the uploaded certificate and profile by name
-        # Replace 'fraterna_distribution' and 'fraterna_appstore' with your actual reference names
         certificates:
           - fraterna_distribution
         provisioning_profiles:
@@ -21,24 +19,14 @@ workflows:
         script: npm run build
       - name: Sync Capacitor
         script: npx cap sync ios
-      - name: Debug signing files
-        script: |
-          echo "=== Checking certificates ==="
-          security find-identity -v -p codesigning
-          echo ""
-          echo "=== Checking provisioning profiles ==="
-          ls -la ~/Library/MobileDevice/Provisioning\ Profiles/
-          echo ""
-          echo "=== Checking keychains ==="
-          security list-keychains
       - name: Set up code signing
         script: xcode-project use-profiles
-      - name: Build IPA
+      - name: Build and export IPA
         script: |
           cd ios/App
-
-          # Run xcodebuild directly to see full error
           set -e
+
+          # Archive
           xcodebuild -project App.xcodeproj \
             -target App \
             -sdk iphoneos \
@@ -49,23 +37,17 @@ workflows:
             DEVELOPMENT_TEAM=VL56K2J6DB \
             CODE_SIGN_IDENTITY="Apple Distribution" \
             PROVISIONING_PROFILE_SPECIFIER="Fraterna_AppStore_New" \
-            PRODUCT_BUNDLE_IDENTIFIER=app.fraterna.beta \
-            2>&1 | tee build_log.txt
+            PRODUCT_BUNDLE_IDENTIFIER=app.fraterna.beta
 
-          # If archive succeeds, export IPA
-          if [ -d build/App.xcarchive ]; then
-            xcodebuild -exportArchive \
-              -archivePath build/App.xcarchive \
-              -exportPath build/ipa \
-              -exportOptionsPlist ExportOptions.plist \
-              CODE_SIGN_STYLE=Manual \
-              DEVELOPMENT_TEAM=VL56K2J6DB
-          fi
+          # Export IPA
+          xcodebuild -exportArchive \
+            -archivePath build/App.xcarchive \
+            -exportPath build/ipa \
+            -exportOptionsPlist ExportOptions.plist \
+            CODE_SIGN_STYLE=Manual \
+            DEVELOPMENT_TEAM=VL56K2J6DB
     artifacts:
-      - ios/App/build_log.txt
-    artifacts:
-      - build/ios/ipa/*.ipa
-      - /tmp/xcodebuild_logs/*.log
+      - ios/App/build/ipa/*.ipa
     publishing:
       email:
         recipients:
