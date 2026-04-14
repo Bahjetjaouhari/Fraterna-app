@@ -131,6 +131,21 @@ jobs:
             -exportPath build/ipa \
             -exportOptionsPlist ExportOptions.plist
 
+      - name: Upload IPA to TestFlight
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+        run: |
+          cd ios/App/build/ipa
+          IPA_FILE=$(ls *.ipa | head -1)
+          echo "Uploading $IPA_FILE to App Store Connect..."
+          xcrun altool --upload-app \
+            --type ios \
+            --file "$IPA_FILE" \
+            --username "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --bundle-id app.fraterna.beta
+
       - name: Upload IPA as artifact
         uses: actions/upload-artifact@v4
         with:
