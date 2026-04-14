@@ -54,8 +54,7 @@ jobs:
             -inkey key.pem \
             -in cert.pem \
             -passin pass:"$P12_PASSWORD" \
-            -passout pass:"$P12_PASSWORD" \
-            -legacy
+            -passout pass:"$P12_PASSWORD"
 
           echo "Created .p12 file: $(wc -c < certificate.p12) bytes"
 
