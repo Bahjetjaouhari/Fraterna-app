@@ -11,14 +11,11 @@
     <key>compileBitcode</key>
     <false/>
     <key>signingStyle</key>
-    <string>automatic</string>
+    <string>manual</string>
     <key>provisioningProfiles</key>
     <dict>
         <key>app.fraterna.beta</key>
-        <dict>
-            <key>teamID</key>
-            <string>VL56K2J6DB</string>
-        </dict>
+        <string>Fraterna_AppStore_New</string>
     </dict>
 </dict>
 </plist>
