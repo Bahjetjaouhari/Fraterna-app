@@ -8,8 +8,6 @@
     <string>VL56K2J6DB</string>
     <key>uploadSymbols</key>
     <true/>
-    <key>uploadBitcode</key>
-    <false/>
     <key>compileBitcode</key>
     <false/>
     <key>signingStyle</key>
