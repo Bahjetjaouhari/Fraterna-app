@@ -4,18 +4,19 @@ import FirebaseCore
 import FirebaseMessaging
 
 @UIApplicationMain
-class AppDelegate: UIResponder, UIApplicationDelegate {
+class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
     var window: UIWindow?
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Initialize Firebase
         FirebaseApp.configure()
+        Messaging.messaging().delegate = self
+
         return true
     }
 
-    // Pass APNS token to Firebase Messaging so it can generate FCM tokens
-    // Capacitor Push Notifications plugin will still handle the registration event
+    // Pass APNS token to Firebase Messaging so it generates FCM token
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
         print("APNS token passed to Firebase Messaging")
@@ -23,6 +24,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate {
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("Failed to register for remote notifications: \(error)")
+    }
+
+    // Firebase Messaging delegate - receives FCM token
+    func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
+        if let token = fcmToken {
+            print("=== FCM TOKEN RECEIVED (iOS) ===")
+            print("FCM Token: \(token)")
+        }
     }
 
     func applicationWillResignActive(_ application: UIApplication) {
