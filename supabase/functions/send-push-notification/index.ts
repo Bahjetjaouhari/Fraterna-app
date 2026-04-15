@@ -141,6 +141,19 @@ async function sendFCMMessage(message: PushMessage): Promise<{ success: boolean;
                 default_light_settings: true,
               },
             },
+            apns: {
+              payload: {
+                aps: {
+                  alert: {
+                    title: message.title,
+                    body: message.body,
+                  },
+                  sound: 'default',
+                  badge: 1,
+                  'content-available': 1,
+                },
+              },
+            },
           },
         }),
       }
