@@ -66,5 +66,8 @@
 		<string>fetch</string>
 		<string>remote-notification</string>
 	</array>
+	<!-- Disable Firebase Messaging auto-swizzling to avoid conflict with Capacitor Push Notifications plugin -->
+	<key>FirebaseAppDelegateProxyEnabled</key>
+	<false/>
 </dict>
 </plist>

@@ -9,7 +9,6 @@ import { toast } from 'sonner';
 const clearBadge = async () => {
   if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
     try {
-      // On Android, we clear all notifications which also clears the badge
       await PushNotifications.removeAllDeliveredNotifications();
       console.log('Badge cleared');
     } catch (error) {
@@ -24,33 +23,39 @@ export const usePushNotifications = () => {
   const isInitialized = useRef(false);
   const savedToken = useRef<string | null>(null);
 
-  // Separate effect for saving token to profile (reacts to session changes)
+  // Save token to profile whenever session or token changes
+  const saveTokenToProfile = async (token: string) => {
+    if (!session?.user?.id) return;
+
+    console.log('Saving push token to profile, token starts with:', token.substring(0, 20));
+
+    const { error } = await supabase
+      .from('profiles')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      .update({ push_token: token } as any)
+      .eq('id', session.user.id);
+
+    if (error) {
+      console.error('Error saving push token to Supabase:', error);
+    } else {
+      console.log('Push token saved to Supabase successfully');
+    }
+  };
+
+  // Save token when session becomes available
   useEffect(() => {
-    // If we have a token and a session, save it
     if (savedToken.current && session?.user?.id) {
-      supabase
-        .from('profiles')
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        .update({ push_token: savedToken.current } as any)
-        .eq('id', session.user.id)
-        .then(({ error }) => {
-          if (error) {
-            console.error('Error saving push token to Supabase:', error);
-          } else {
-            console.log('Push token saved to Supabase successfully');
-          }
-        });
+      saveTokenToProfile(savedToken.current);
     }
   }, [session?.user?.id]);
 
   useEffect(() => {
-    // Only run this on native platforms (iOS/Android), not on the web
+    // Only run on native platforms
     if (!Capacitor.isNativePlatform()) {
-      console.log('Push notifications not supported on web natively via Capacitor without Firebase config.');
+      console.log('Push notifications not supported on web');
       return;
     }
 
-    // Prevent double initialization
     if (isInitialized.current) {
       console.log('Push notifications already initialized, skipping...');
       return;
@@ -64,38 +69,28 @@ export const usePushNotifications = () => {
         // 1. Request permission
         let permStatus = await PushNotifications.checkPermissions();
 
-        if (permStatus.receive === 'prompt') {
+        if (permStatus.receive === 'prompt' || permStatus.receive === 'prompt-with-rationale') {
           permStatus = await PushNotifications.requestPermissions();
         }
 
         if (permStatus.receive !== 'granted') {
-          console.warn('User denied push notification permissions');
+          console.warn('Push notification permission not granted:', permStatus.receive);
           return;
         }
 
-        // 2. Register with Apple / Google to receive token
+        // 2. Register with Apple/Google to receive token
         await PushNotifications.register();
 
         // 3. Setup Listeners (only once)
         // On success, we receive the token
         await PushNotifications.addListener('registration', async (token: Token) => {
-          console.log('Push registration success, token: ' + token.value);
+          console.log('Push registration success, token: ' + token.value.substring(0, 30) + '...');
           setFcmToken(token.value);
           savedToken.current = token.value;
 
-          // If user is logged in, save token to their profile in Supabase
+          // Save token to profile
           if (session?.user?.id) {
-            const { error } = await supabase
-              .from('profiles')
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              .update({ push_token: token.value } as any)
-              .eq('id', session.user.id);
-
-            if (error) {
-              console.error('Error saving push token to Supabase:', error);
-            } else {
-              console.log('Push token saved to Supabase successfully');
-            }
+            await saveTokenToProfile(token.value);
           }
         });
 
@@ -116,9 +111,7 @@ export const usePushNotifications = () => {
         // Method called when tapping on a notification
         await PushNotifications.addListener('pushNotificationActionPerformed', async (notification: ActionPerformed) => {
           console.log('Push action performed: ' + JSON.stringify(notification));
-          // Clear badge when notification is tapped
           await clearBadge();
-          // Here we would typically route to a specific chat or screen based on the notification data
         });
 
         isInitialized.current = true;
@@ -131,16 +124,14 @@ export const usePushNotifications = () => {
 
     initPushNotifications();
 
-    // Don't cleanup on session changes - only on unmount
-    // This keeps listeners active even when session temporarily changes
     return () => {
       if (Capacitor.isNativePlatform() && isInitialized.current) {
-        console.log('Cleaning up push notification listeners (component unmount)');
+        console.log('Cleaning up push notification listeners');
         PushNotifications.removeAllListeners();
         isInitialized.current = false;
       }
     };
-  }, []); // Empty dependency - only initialize once
+  }, []);
 
   return { fcmToken };
 };
