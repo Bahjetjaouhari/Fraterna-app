@@ -5,9 +5,9 @@ import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
-// Clear badge on Android
+// Clear badge on native platforms (both Android and iOS)
 const clearBadge = async () => {
-  if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'android') {
+  if (Capacitor.isNativePlatform()) {
     try {
       await PushNotifications.removeAllDeliveredNotifications();
       console.log('Badge cleared');
@@ -27,7 +27,7 @@ export const usePushNotifications = () => {
   const saveTokenToProfile = async (token: string) => {
     if (!session?.user?.id) return;
 
-    console.log('Saving push token to profile, token starts with:', token.substring(0, 20));
+    console.log('Saving push token to profile, platform:', Capacitor.getPlatform(), 'token starts with:', token.substring(0, 20));
 
     const { error } = await supabase
       .from('profiles')
@@ -78,13 +78,11 @@ export const usePushNotifications = () => {
           return;
         }
 
-        // 2. Register with Apple/Google to receive token
-        await PushNotifications.register();
-
-        // 3. Setup Listeners (only once)
+        // 2. Setup listeners BEFORE registering (prevents race condition on iOS where
+        //    the token arrives before the listener is attached)
         // On success, we receive the token
         await PushNotifications.addListener('registration', async (token: Token) => {
-          console.log('Push registration success, token: ' + token.value.substring(0, 30) + '...');
+          console.log('Push registration success, platform:', Capacitor.getPlatform(), 'token:', token.value.substring(0, 30) + '...');
           setFcmToken(token.value);
           savedToken.current = token.value;
 
@@ -114,8 +112,11 @@ export const usePushNotifications = () => {
           await clearBadge();
         });
 
+        // 3. Register with Apple/Google to receive token (AFTER listeners are set up)
+        await PushNotifications.register();
+
         isInitialized.current = true;
-        console.log('Push notifications initialized successfully');
+        console.log('Push notifications initialized successfully on', Capacitor.getPlatform());
 
       } catch (error) {
         console.error('Error initializing push notifications:', error);

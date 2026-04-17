@@ -142,6 +142,10 @@ async function sendFCMMessage(message: PushMessage): Promise<{ success: boolean;
               },
             },
             apns: {
+              headers: {
+                'apns-push-type': 'alert',
+                'apns-priority': '10',
+              },
               payload: {
                 aps: {
                   alert: {

@@ -16,37 +16,39 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         return true
     }
 
-    // Pass APNS token to Firebase Messaging so it generates FCM token
+    // Pass APNS token to Firebase, then forward the FCM token to Capacitor
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
         print("APNS token passed to Firebase Messaging")
+
+        // Request the FCM token and forward it to Capacitor's PushNotifications plugin
+        Messaging.messaging().token(completion: { token, error in
+            if let error = error {
+                print("Error getting FCM token: \(error)")
+                NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
+            } else if let token = token {
+                print("=== FCM TOKEN (via didRegisterForRemoteNotifications) ===")
+                print("FCM Token: \(token)")
+                // Post the FCM token (String) to Capacitor so the JS side receives the correct token
+                NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)
+            }
+        })
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
         print("Failed to register for remote notifications: \(error)")
+        // Forward the error to Capacitor's PushNotifications plugin
+        NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
     }
 
-    // Firebase Messaging delegate - receives FCM token
+    // Firebase Messaging delegate - receives FCM token updates (including refresh)
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
         if let token = fcmToken {
-            print("=== FCM TOKEN RECEIVED (iOS) ===")
+            print("=== FCM TOKEN RECEIVED (via MessagingDelegate) ===")
             print("FCM Token: \(token)")
+            // Also post to Capacitor so the JS side gets token refresh updates
+            NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)
         }
-    }
-
-    func applicationWillResignActive(_ application: UIApplication) {
-    }
-
-    func applicationDidEnterBackground(_ application: UIApplication) {
-    }
-
-    func applicationWillEnterForeground(_ application: UIApplication) {
-    }
-
-    func applicationDidBecomeActive(_ application: UIApplication) {
-    }
-
-    func applicationWillTerminate(_ application: UIApplication) {
     }
 
     func application(_ app: UIApplication, open url: URL, options: [UIApplication.OpenURLOptionsKey: Any] = [:]) -> Bool {
