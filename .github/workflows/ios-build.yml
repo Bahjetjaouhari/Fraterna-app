@@ -115,6 +115,10 @@ jobs:
           UUID=$(/usr/libexec/PlistBuddy -c "Print UUID" /dev/stdin <<< "$(security cms -D -i "$PROVISION_PROFILE_PATH" 2>/dev/null)")
           echo "Using provisioning profile UUID: $UUID"
 
+          # Get the signing identity from the keychain
+          SIGNING_IDENTITY=$(security find-identity -v -p codesigning build.keychain | grep "Apple Distribution" | head -1 | sed -n 's/.*"\(.*\)".*/\1/p')
+          echo "Signing identity: $SIGNING_IDENTITY"
+
           # Build the archive WITHOUT code signing
           # (Capacitor SPM plugins don't support provisioning profiles,
           #  so we sign only during the export step)
@@ -128,6 +132,31 @@ jobs:
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
             DEVELOPMENT_TEAM=VL56K2J6DB
+
+          # Manually sign the .app with entitlements BEFORE export
+          # This is required because CODE_SIGNING_ALLOWED=NO prevents Xcode from
+          # embedding entitlements during the archive step. Without this, the
+          # aps-environment entitlement is missing and push notifications fail.
+          APP_PATH="build/App.xcarchive/Products/Applications/App.app"
+
+          # Sign embedded frameworks first (inside-out signing order)
+          if [ -d "$APP_PATH/Frameworks" ] && [ "$(ls -A "$APP_PATH/Frameworks")" ]; then
+            echo "Signing frameworks..."
+            for FRAMEWORK in "$APP_PATH/Frameworks"/*; do
+              echo "  Signing: $(basename "$FRAMEWORK")"
+              codesign -f -s "$SIGNING_IDENTITY" "$FRAMEWORK"
+            done
+          fi
+
+          # Sign the app bundle with entitlements
+          echo "Signing app with entitlements..."
+          codesign -f -s "$SIGNING_IDENTITY" \
+            --entitlements App/App.entitlements \
+            "$APP_PATH"
+
+          # Verify entitlements are embedded (should show aps-environment)
+          echo "Verifying embedded entitlements..."
+          codesign -d --entitlements :- "$APP_PATH" 2>&1 || true
 
           # Export the IPA with manual signing
           mkdir -p build/ipa
