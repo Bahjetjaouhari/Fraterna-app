@@ -28,11 +28,41 @@ function getChannelId(type: string): string {
   }
 }
 
-// Get OAuth2 access token using Service Account
+// Base64url encoding (required for JWT - standard btoa is NOT base64url)
+function base64urlEncode(data: string): string {
+  return btoa(data)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '')
+}
+
+// Get OAuth2 access token using Service Account JSON
 async function getAccessToken(): Promise<string> {
-  const clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')
-  const privateKeyId = Deno.env.get('FIREBASE_PRIVATE_KEY_ID')
-  const privateKey = Deno.env.get('FIREBASE_PRIVATE_KEY')
+  // Try FIREBASE_SERVICE_ACCOUNT JSON first (recommended approach)
+  const serviceAccountJson = Deno.env.get('FIREBASE_SERVICE_ACCOUNT')
+
+  let clientEmail: string
+  let privateKeyId: string
+  let privateKey: string
+
+  if (serviceAccountJson) {
+    try {
+      const sa = JSON.parse(serviceAccountJson)
+      clientEmail = sa.client_email
+      privateKeyId = sa.private_key_id
+      privateKey = sa.private_key
+      console.log('[AUTH] Using FIREBASE_SERVICE_ACCOUNT JSON for', clientEmail)
+    } catch {
+      console.error('[AUTH] Failed to parse FIREBASE_SERVICE_ACCOUNT JSON')
+      throw new Error('Invalid FIREBASE_SERVICE_ACCOUNT JSON')
+    }
+  } else {
+    // Fallback to individual env vars
+    clientEmail = Deno.env.get('FIREBASE_CLIENT_EMAIL')!
+    privateKeyId = Deno.env.get('FIREBASE_PRIVATE_KEY_ID')!
+    privateKey = Deno.env.get('FIREBASE_PRIVATE_KEY')!
+    console.log('[AUTH] Using individual env vars for', clientEmail)
+  }
 
   if (!clientEmail || !privateKeyId || !privateKey) {
     throw new Error('Missing Firebase credentials')
@@ -46,7 +76,8 @@ async function getAccessToken(): Promise<string> {
     .replace(/\n/g, '')
     .trim()
 
-  const header = btoa(JSON.stringify({
+  // Build JWT with PROPER base64url encoding
+  const header = base64urlEncode(JSON.stringify({
     alg: 'RS256',
     typ: 'JWT',
     kid: privateKeyId,
@@ -55,7 +86,7 @@ async function getAccessToken(): Promise<string> {
   const now = Math.floor(Date.now() / 1000)
   const expiry = now + 3600
 
-  const claim = btoa(JSON.stringify({
+  const claim = base64urlEncode(JSON.stringify({
     iss: clientEmail,
     sub: clientEmail,
     aud: 'https://oauth2.googleapis.com/token',
@@ -82,12 +113,13 @@ async function getAccessToken(): Promise<string> {
     new TextEncoder().encode(signatureInput)
   )
 
-  const signature = btoa(String.fromCharCode(...new Uint8Array(signatureBuffer)))
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/, '')
+  const signature = base64urlEncode(
+    String.fromCharCode(...new Uint8Array(signatureBuffer))
+  )
 
   const jwt = `${header}.${claim}.${signature}`
+
+  console.log('[AUTH] JWT generated, exchanging for access token...')
 
   // Exchange JWT for access token
   const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -98,10 +130,12 @@ async function getAccessToken(): Promise<string> {
 
   if (!tokenResponse.ok) {
     const error = await tokenResponse.text()
+    console.error('[AUTH] Token exchange failed:', tokenResponse.status, error)
     throw new Error(`Failed to get access token: ${error}`)
   }
 
   const tokenData = await tokenResponse.json()
+  console.log('[AUTH] Access token obtained successfully, expires in:', tokenData.expires_in, 's')
   return tokenData.access_token
 }
 

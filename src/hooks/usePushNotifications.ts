@@ -23,15 +23,9 @@ export const usePushNotifications = () => {
   const isInitialized = useRef(false);
   const savedToken = useRef<string | null>(null);
 
-  // Debug state - visible in UI to diagnose push notification issues
-  const [debugStatus, setDebugStatus] = useState<string>('initializing...');
-
   // Save token to profile whenever session or token changes
   const saveTokenToProfile = async (token: string) => {
-    if (!session?.user?.id) {
-      console.log('[PUSH DEBUG] Cannot save token - no session');
-      return;
-    }
+    if (!session?.user?.id) return;
 
     console.log('Saving push token to profile, platform:', Capacitor.getPlatform(), 'token starts with:', token.substring(0, 20));
 
@@ -43,10 +37,8 @@ export const usePushNotifications = () => {
 
     if (error) {
       console.error('Error saving push token to Supabase:', error);
-      setDebugStatus(prev => prev + ' | SUPABASE SAVE ERROR: ' + error.message);
     } else {
       console.log('Push token saved to Supabase successfully');
-      setDebugStatus(prev => prev + ' | TOKEN SAVED TO SUPABASE OK');
     }
   };
 
@@ -61,7 +53,6 @@ export const usePushNotifications = () => {
     // Only run on native platforms
     if (!Capacitor.isNativePlatform()) {
       console.log('Push notifications not supported on web');
-      setDebugStatus('web platform - not applicable');
       return;
     }
 
@@ -71,58 +62,41 @@ export const usePushNotifications = () => {
     }
 
     const initPushNotifications = async () => {
-      const platform = Capacitor.getPlatform();
-      setDebugStatus(`platform: ${platform} | starting init...`);
-
       try {
         // Clear any existing badges on app start
         await clearBadge();
 
         // 1. Request permission
-        setDebugStatus(`platform: ${platform} | checking permissions...`);
         let permStatus = await PushNotifications.checkPermissions();
-        setDebugStatus(`platform: ${platform} | permission: ${permStatus.receive}`);
 
         if (permStatus.receive === 'prompt' || permStatus.receive === 'prompt-with-rationale') {
-          setDebugStatus(`platform: ${platform} | requesting permissions...`);
           permStatus = await PushNotifications.requestPermissions();
-          setDebugStatus(`platform: ${platform} | permission after request: ${permStatus.receive}`);
         }
 
         if (permStatus.receive !== 'granted') {
           console.warn('Push notification permission not granted:', permStatus.receive);
-          setDebugStatus(`platform: ${platform} | PERMISSION DENIED: ${permStatus.receive}`);
           return;
         }
 
         // 2. Setup listeners BEFORE registering (prevents race condition on iOS where
         //    the token arrives before the listener is attached)
-        setDebugStatus(`platform: ${platform} | permission: granted | setting up listeners...`);
-
-        // On success, we receive the token
         await PushNotifications.addListener('registration', async (token: Token) => {
-          const tokenPreview = token.value.substring(0, 30);
-          console.log('Push registration success, platform:', Capacitor.getPlatform(), 'token:', tokenPreview + '...');
+          console.log('Push registration success, platform:', Capacitor.getPlatform(), 'token:', token.value.substring(0, 30) + '...');
           setFcmToken(token.value);
           savedToken.current = token.value;
-          setDebugStatus(`platform: ${platform} | TOKEN RECEIVED: ${tokenPreview}... | saving...`);
 
           // Save token to profile
           if (session?.user?.id) {
             await saveTokenToProfile(token.value);
-          } else {
-            setDebugStatus(`platform: ${platform} | TOKEN: ${tokenPreview}... | NO SESSION YET`);
           }
         });
 
-        // Some issue with our setup and push will not work
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         await PushNotifications.addListener('registrationError', (error: any) => {
           console.error('Error on push registration: ' + JSON.stringify(error));
-          setDebugStatus(`platform: ${platform} | REGISTRATION ERROR: ${JSON.stringify(error)}`);
         });
 
-        // Show us the notification payload if the app is open on our device
+        // Show notification payload if the app is open
         await PushNotifications.addListener('pushNotificationReceived', (notification: PushNotificationSchema) => {
           console.log('Push received: ' + JSON.stringify(notification));
           toast(notification.title || 'New Notification', {
@@ -137,7 +111,6 @@ export const usePushNotifications = () => {
         });
 
         // 3. Register with Apple/Google to receive token (AFTER listeners are set up)
-        setDebugStatus(`platform: ${platform} | permission: granted | listeners ready | calling register()...`);
         await PushNotifications.register();
 
         isInitialized.current = true;
@@ -145,7 +118,6 @@ export const usePushNotifications = () => {
 
       } catch (error) {
         console.error('Error initializing push notifications:', error);
-        setDebugStatus(`platform: ${Capacitor.getPlatform()} | INIT ERROR: ${error}`);
       }
     };
 
@@ -160,5 +132,5 @@ export const usePushNotifications = () => {
     };
   }, []);
 
-  return { fcmToken, debugStatus };
+  return { fcmToken };
 };
