@@ -28,6 +28,7 @@
     "@capacitor/push-notifications": "^8.0.2",
     "@capacitor/splash-screen": "^8.0.1",
     "@capacitor/status-bar": "^8.0.1",
+    "@capawesome/capacitor-badge": "^8.0.2",
     "@radix-ui/react-label": "^2.1.2",
     "@radix-ui/react-slot": "^1.1.2",
     "@radix-ui/react-switch": "^1.1.3",

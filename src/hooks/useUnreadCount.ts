@@ -1,23 +1,41 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
+import { Capacitor } from '@capacitor/core';
+import { Badge } from '@capawesome/capacitor-badge';
 
 interface UnreadCounts {
   global: number;
   emergency: number;
+  friends: number;
   total: number;
 }
+
+// Sync native app icon badge with unread count (iOS only, Android handled differently)
+const syncNativeBadge = async (count: number) => {
+  if (!Capacitor.isNativePlatform()) return;
+
+  try {
+    if (count <= 0) {
+      await Badge.clear();
+    } else {
+      await Badge.set({ count });
+    }
+  } catch (error) {
+    console.error('Error syncing native badge:', error);
+  }
+};
 
 /**
  * Hook para obtener el conteo de mensajes no leídos en cada chat
  */
 export function useUnreadCount() {
   const { user } = useAuth();
-  const [counts, setCounts] = useState<UnreadCounts>({ global: 0, emergency: 0, total: 0 });
+  const [counts, setCounts] = useState<UnreadCounts>({ global: 0, emergency: 0, friends: 0, total: 0 });
 
   const fetchUnreadCounts = useCallback(async () => {
     if (!user) {
-      setCounts({ global: 0, emergency: 0, total: 0 });
+      setCounts({ global: 0, emergency: 0, friends: 0, total: 0 });
       return;
     }
 
@@ -53,10 +71,24 @@ export function useUnreadCount() {
 
       if (emergencyError) console.error('Error counting emergency messages:', emergencyError);
 
+      // Contar solicitudes de amistad pendientes
+      const { count: friendsCount, error: friendsError } = await supabase
+        .from('friendships')
+        .select('*', { count: 'exact', head: true })
+        .eq('addressee_id', user.id)
+        .eq('status', 'pending');
+
+      if (friendsError) console.error('Error counting friend requests:', friendsError);
+
+      const g = globalCount || 0;
+      const e = emergencyCount || 0;
+      const f = friendsCount || 0;
+
       setCounts({
-        global: globalCount || 0,
-        emergency: emergencyCount || 0,
-        total: (globalCount || 0) + (emergencyCount || 0),
+        global: g,
+        emergency: e,
+        friends: f,
+        total: g + e + f,
       });
     } catch (error) {
       console.error('Error in useUnreadCount:', error);
@@ -77,7 +109,7 @@ export function useUnreadCount() {
 
       if (error) console.error('Error marking global as read:', error);
       else {
-        setCounts(prev => ({ ...prev, global: 0, total: prev.emergency }));
+        setCounts(prev => ({ ...prev, global: 0, total: prev.emergency + prev.friends }));
       }
     } catch (error) {
       console.error('Error in markGlobalAsRead:', error);
@@ -98,7 +130,7 @@ export function useUnreadCount() {
 
       if (error) console.error('Error marking emergency as read:', error);
       else {
-        setCounts(prev => ({ ...prev, emergency: 0, total: prev.global }));
+        setCounts(prev => ({ ...prev, emergency: 0, total: prev.global + prev.friends }));
       }
     } catch (error) {
       console.error('Error in markEmergencyAsRead:', error);
@@ -136,12 +168,25 @@ export function useUnreadCount() {
           }
         }
       )
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'friendships' },
+        () => {
+          // Refresh counts on any friendship change (request, accept, block)
+          fetchUnreadCounts();
+        }
+      )
       .subscribe();
 
     return () => {
       supabase.removeChannel(channel);
     };
   }, [user, fetchUnreadCounts]);
+
+  // Sync native badge whenever total changes
+  useEffect(() => {
+    syncNativeBadge(counts.total);
+  }, [counts.total]);
 
   return {
     counts,

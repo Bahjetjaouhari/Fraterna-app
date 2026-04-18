@@ -1,19 +1,40 @@
 import { useState, useEffect, useRef } from 'react';
 import { PushNotifications, Token, ActionPerformed, PushNotificationSchema } from '@capacitor/push-notifications';
 import { Capacitor } from '@capacitor/core';
+import { Badge } from '@capawesome/capacitor-badge';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { toast } from 'sonner';
 
-// Clear badge on native platforms (both Android and iOS)
-const clearBadge = async () => {
-  if (Capacitor.isNativePlatform()) {
-    try {
-      await PushNotifications.removeAllDeliveredNotifications();
-      console.log('Badge cleared');
-    } catch (error) {
-      console.error('Error clearing badge:', error);
+// Get the current unread count from the database for badge management
+const getUnreadCountFromDB = async (userId: string): Promise<number> => {
+  try {
+    const { data, error } = await supabase.rpc('get_unread_count', { target_user_id: userId });
+    if (error) {
+      console.error('Error getting unread count:', error);
+      return 0;
     }
+    return (data as number) || 0;
+  } catch (error) {
+    console.error('Error in getUnreadCountFromDB:', error);
+    return 0;
+  }
+};
+
+// Update native badge to reflect current unread count (instead of clearing to 0)
+const updateBadgeToUnreadCount = async (userId: string) => {
+  if (!Capacitor.isNativePlatform()) return;
+
+  try {
+    const count = await getUnreadCountFromDB(userId);
+    if (count <= 0) {
+      await Badge.clear();
+    } else {
+      await Badge.set({ count });
+    }
+    console.log('Badge updated to unread count:', count);
+  } catch (error) {
+    console.error('Error updating badge:', error);
   }
 };
 
@@ -63,8 +84,10 @@ export const usePushNotifications = () => {
 
     const initPushNotifications = async () => {
       try {
-        // Clear any existing badges on app start
-        await clearBadge();
+        // Update badge to current unread count on app start
+        if (session?.user?.id) {
+          await updateBadgeToUnreadCount(session.user.id);
+        }
 
         // 1. Request permission
         let permStatus = await PushNotifications.checkPermissions();
@@ -107,7 +130,10 @@ export const usePushNotifications = () => {
         // Method called when tapping on a notification
         await PushNotifications.addListener('pushNotificationActionPerformed', async (notification: ActionPerformed) => {
           console.log('Push action performed: ' + JSON.stringify(notification));
-          await clearBadge();
+          // Update badge to current unread count instead of clearing to 0
+          if (session?.user?.id) {
+            await updateBadgeToUnreadCount(session.user.id);
+          }
         });
 
         // 3. Register with Apple/Google to receive token (AFTER listeners are set up)

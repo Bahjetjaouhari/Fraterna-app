@@ -11,6 +11,7 @@ interface PushMessage {
   title: string
   body: string
   type: string
+  badgeCount: number
   data?: Record<string, string>
 }
 
@@ -187,7 +188,7 @@ async function sendFCMMessage(message: PushMessage): Promise<{ success: boolean;
                     body: message.body,
                   },
                   sound: 'default',
-                  badge: 1,
+                  badge: message.badgeCount,
                   'content-available': 1,
                 },
               },
@@ -272,11 +273,16 @@ serve(async (req) => {
 
       for (const user of users || []) {
         if (user.push_token) {
+          // Get unread count for badge
+          const { data: unreadData } = await supabase.rpc('get_unread_count', { target_user_id: user.id })
+          const badgeCount = (unreadData as number) || 0
+
           notifications.push({
             token: user.push_token,
             title: '🚨 Alerta de Emergencia',
             body: `${senderName}: ${message}`,
             type: 'emergency_message',
+            badgeCount,
             data: {
               type: 'emergency_message',
               city: city || '',
@@ -316,11 +322,16 @@ serve(async (req) => {
 
       for (const user of users || []) {
         if (user.push_token) {
+          // Get unread count for badge
+          const { data: unreadData } = await supabase.rpc('get_unread_count', { target_user_id: user.id })
+          const badgeCount = (unreadData as number) || 0
+
           notifications.push({
             token: user.push_token,
             title: '💬 Chat Global',
             body: `${senderName}: ${messagePreview}`,
             type: 'global_message',
+            badgeCount,
             data: {
               type: 'global_message',
               sender_id: user_id,
@@ -356,11 +367,16 @@ serve(async (req) => {
       const senderName = await getSenderName(from_user_id)
 
       if (recipient?.push_token) {
+        // Get unread count for badge
+        const { data: unreadData } = await supabase.rpc('get_unread_count', { target_user_id: to_user_id })
+        const badgeCount = (unreadData as number) || 0
+
         notifications.push({
           token: recipient.push_token,
           title: '👋 Nueva solicitud de amistad',
           body: `${senderName} quiere ser tu amigo`,
           type: 'friend_request',
+          badgeCount,
           data: {
             type: 'friend_request',
             sender_id: from_user_id,
@@ -397,11 +413,17 @@ serve(async (req) => {
       const accepterName = await getSenderName(from_user_id)
 
       if (requester?.push_token) {
+        // Get unread count for badge
+        // friend_accepted: +1 because the friendship is no longer 'pending' so get_unread_count won't include it
+        const { data: unreadData } = await supabase.rpc('get_unread_count', { target_user_id: to_user_id })
+        const badgeCount = ((unreadData as number) || 0) + 1
+
         notifications.push({
           token: requester.push_token,
           title: '✅ Solicitud aceptada',
           body: `${accepterName} aceptó tu solicitud de amistad`,
           type: 'friend_accepted',
+          badgeCount,
           data: {
             type: 'friend_accepted',
             sender_id: from_user_id,
@@ -432,6 +454,7 @@ serve(async (req) => {
         title: title || '🧪 Test de Notificación',
         body: body || 'Si ves esto, las notificaciones funcionan correctamente',
         type: 'test',
+        badgeCount: 1,
         data: {
           type: 'test',
         },

@@ -298,6 +298,7 @@ export type Database = {
           phone: string | null
           photo_url: string | null
           proximity_alerts_enabled: boolean | null
+          push_token: string | null
           proximity_radius_km: number
           role: string
           stealth_mode: boolean
@@ -324,6 +325,7 @@ export type Database = {
           phone?: string | null
           photo_url?: string | null
           proximity_alerts_enabled?: boolean | null
+          push_token?: string | null
           proximity_radius_km?: number
           role?: string
           stealth_mode?: boolean
@@ -350,6 +352,7 @@ export type Database = {
           phone?: string | null
           photo_url?: string | null
           proximity_alerts_enabled?: boolean | null
+          push_token?: string | null
           proximity_radius_km?: number
           role?: string
           stealth_mode?: boolean
@@ -484,6 +487,7 @@ export type Database = {
       }
       is_admin: { Args: { uid: string }; Returns: boolean }
       is_user_active: { Args: { uid: string }; Returns: boolean }
+      get_unread_count: { Args: { target_user_id: string }; Returns: number }
     }
     Enums: {
       [_ in never]: never

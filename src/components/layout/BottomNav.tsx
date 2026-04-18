@@ -10,20 +10,7 @@ interface NavItem {
   path: string;
   adminOnly?: boolean;
   emergencyOnly?: boolean;
-  unreadKey?: 'global' | 'emergency';
-}
-
-interface BottomNavProps {
-  isAdmin?: boolean;
-}
-
-interface NavItem {
-  icon: React.ElementType;
-  label: string;
-  path: string;
-  adminOnly?: boolean;
-  emergencyOnly?: boolean;
-  unreadKey?: 'global' | 'emergency';
+  unreadKey?: 'global' | 'emergency' | 'friends';
 }
 
 interface BottomNavProps {
@@ -53,7 +40,7 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     () => [
       { icon: Map, label: "Mapa", path: "/map" },
       { icon: MessageCircle, label: "Chat", path: "/chat", unreadKey: 'global' },
-      { icon: Users, label: "Amigos", path: "/friends" },
+      { icon: Users, label: "Amigos", path: "/friends", unreadKey: 'friends' },
       {
         icon: AlertTriangle,
         label: "Emergencia",
@@ -80,6 +67,9 @@ export const BottomNav: React.FC<BottomNavProps> = ({ isAdmin = false }) => {
     }
     if (item.unreadKey === 'emergency' && counts.emergency > 0) {
       return counts.emergency;
+    }
+    if (item.unreadKey === 'friends' && counts.friends > 0) {
+      return counts.friends;
     }
     return undefined;
   };
