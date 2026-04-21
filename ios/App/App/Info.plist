@@ -69,5 +69,10 @@
 	<!-- Disable Firebase Messaging auto-swizzling to avoid conflict with Capacitor Push Notifications plugin -->
 	<key>FirebaseAppDelegateProxyEnabled</key>
 	<false/>
+	<!-- Supabase Config (used by LocationManager native service) -->
+	<key>SupabaseUrl</key>
+	<string>https://vzlbvknauwvrqwpvtaqe.supabase.co</string>
+	<key>SupabaseAnonKey</key>
+	<string>eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bGJ2a25hdXd2cnF3cHZ0YXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4NzUwODUsImV4cCI6MjA4NDQ1MTA4NX0.XlPQBEKzv-RxOnTD1pbS-5A_J5xavLqwpWH9IAC5kOw</string>
 </dict>
 </plist>

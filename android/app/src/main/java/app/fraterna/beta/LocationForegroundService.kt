@@ -391,20 +391,23 @@ class LocationForegroundService : Service() {
                                 continue
                             }
 
-                            // Skip if tracking_enabled is false
-                            if (!profileObj.optBoolean("tracking_enabled", true)) {
-                                android.util.Log.d("LocationService", "Skipping user with tracking disabled")
-                                continue
-                            }
-
-                            // Check heartbeat - user is online if they have a heartbeat (app installed and logged in)
+                            // Check heartbeat - user is online only if heartbeat is recent
                             val lastHeartbeat = profileObj.optString("last_heartbeat_at", null)
                             if (lastHeartbeat.isNullOrEmpty()) {
-                                android.util.Log.d("LocationService", "Skipping user with no heartbeat (not logged in)")
-                                continue
+                                continue  // No heartbeat = not logged in
                             }
-                            // User is considered online as long as last_heartbeat_at is not null
-                            // (only cleared on explicit logout)
+
+                            // Check if heartbeat is within 3 minutes
+                            val trackingEnabled = profileObj.optBoolean("tracking_enabled", true)
+                            if (!trackingEnabled) {
+                                continue  // Tracking disabled = offline
+                            }
+
+                            val heartbeatTime = java.time.Instant.parse(lastHeartbeat)
+                            val threeMinAgo = java.time.Instant.now().minusSeconds(180)
+                            if (heartbeatTime.isBefore(threeMinAgo)) {
+                                continue  // Heartbeat too old = no internet or app closed
+                            }
 
                             // Calculate distance
                             val distance = haversineDistance(myLat, myLng, lat, lng)

@@ -126,13 +126,10 @@ const EmergencyChat = () => {
       setActiveUsersCount(0);
       return;
     }
-    const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-    const { count, error } = await supabase
-      .from("profiles")
-      .select("id", { count: "exact", head: true })
-      .ilike("city", myCity)
-      .gt("last_seen_at", fiveMinAgo);
-    if (!error && count != null) setActiveUsersCount(count);
+    const { data, error } = await supabase
+      .rpc('get_online_users_count_by_city', { city_param: myCity });
+
+    if (!error && data != null) setActiveUsersCount(data);
   };
 
   useEffect(() => {
@@ -174,6 +171,13 @@ const EmergencyChat = () => {
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile, myCity, myCityNormalized]);
+
+  // Refresh data when app returns from background
+  useEffect(() => {
+    const handleResume = () => fetchMessages();
+    window.addEventListener('app-resume', handleResume);
+    return () => window.removeEventListener('app-resume', handleResume);
+  }, []);
 
   // Auto-scroll al último mensaje
   useEffect(() => {

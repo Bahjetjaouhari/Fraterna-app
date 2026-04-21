@@ -1,7 +1,8 @@
-import { useState, useEffect, createContext, useContext, ReactNode, useRef } from 'react';
+import { useState, useEffect, createContext, useContext, ReactNode, useRef, useCallback } from 'react';
 import { User, Session } from '@supabase/supabase-js';
 import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
+import { App } from '@capacitor/app';
 import { supabase } from '@/integrations/supabase/client';
 
 interface Profile {
@@ -126,6 +127,22 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearInterval(heartbeatIntervalRef.current);
     }
 
+    // Start native iOS location service
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+      supabase.auth.getSession().then(({ data: { session } }) => {
+        if (session?.access_token) {
+          try {
+            Capacitor.nativeCallback('LocationService', 'startLocationUpdates', {
+              userId: userId,
+              authToken: session.access_token
+            });
+          } catch (e) {
+            console.error('Failed to start iOS location service:', e);
+          }
+        }
+      });
+    }
+
     // Set up interval for subsequent heartbeats
     heartbeatIntervalRef.current = setInterval(() => {
       sendHeartbeat(userId);
@@ -229,40 +246,45 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       }
     );
 
-    // Handle visibility change - send heartbeat immediately when returning to tab
-    const handleVisibilityChange = () => {
-      if (document.visibilityState === 'visible' && user?.id) {
-        // User returned to the tab - send heartbeat immediately
-        sendHeartbeat(user.id);
-      }
-      // NOTE: We do NOT stop heartbeat when hidden because:
-      // - The foreground service keeps location updating
-      // - User should stay active even when app is in background
-    };
+    // Handle native app state changes (pause/resume)
+    const setupAppStateListener = async () => {
+      const appStateListener = await App.addListener('appStateChange', (state: { isActive: boolean }) => {
+        if (state.isActive && user?.id) {
+          // App came to foreground - send heartbeat and refresh data
+          sendHeartbeat(user.id);
+          window.dispatchEvent(new CustomEvent('app-resume'));
 
-    // Handle bfcache (back-forward cache) restoration
-    const handlePageShow = (event: PageTransitionEvent) => {
-      if (event.persisted && user?.id) {
-        // Page was restored from bfcache - refresh auth state and restart heartbeat
-        supabase.auth.getSession().then(({ data: { session } }) => {
-          setSession(session);
-          setUser(session?.user ?? null);
-          if (session?.user) {
-            fetchProfile(session.user.id);
-            startHeartbeat(session.user.id);
+          // Switch iOS location accuracy back to high
+          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+            try {
+              Capacitor.nativeCallback('LocationService', 'setForegroundAccuracy', {});
+            } catch (e) {
+              console.error('Failed to set foreground accuracy:', e);
+            }
           }
-        });
-      }
+        } else if (!state.isActive) {
+          // App went to background - switch iOS location accuracy to low (battery saving)
+          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+            try {
+              Capacitor.nativeCallback('LocationService', 'setBackgroundAccuracy', {});
+            } catch (e) {
+              console.error('Failed to set background accuracy:', e);
+            }
+          }
+        }
+      });
+      return appStateListener;
     };
 
-    document.addEventListener('visibilitychange', handleVisibilityChange);
-    window.addEventListener('pageshow', handlePageShow);
+    let appStateListener: Awaited<ReturnType<typeof setupAppStateListener>> | null = null;
+    setupAppStateListener().then(listener => {
+      appStateListener = listener;
+    });
 
     return () => {
       subscription.unsubscribe();
       stopHeartbeat();
-      document.removeEventListener('visibilitychange', handleVisibilityChange);
-      window.removeEventListener('pageshow', handlePageShow);
+      appStateListener?.remove();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user?.id]);
@@ -338,6 +360,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const signOut = async () => {
     // Stop heartbeat and clear session data
     stopHeartbeat();
+
+    // Stop native iOS location service
+    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+      try {
+        Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+      } catch (e) {
+        console.error('Failed to stop iOS location service:', e);
+      }
+    }
 
     if (user?.id) {
       try {

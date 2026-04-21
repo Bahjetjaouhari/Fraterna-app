@@ -157,18 +157,22 @@ export default function Chat() {
   // Active users count (global — all users active within last 5 min)
   useEffect(() => {
     const fetchActiveUsers = async () => {
-      const fiveMinAgo = new Date(Date.now() - 5 * 60 * 1000).toISOString();
-      const { count, error } = await supabase
-        .from("profiles")
-        .select("id", { count: "exact", head: true })
-        .gte("last_seen_at", fiveMinAgo);
+      const { data, error } = await supabase
+        .rpc('get_online_users_count');
 
-      if (!error && count !== null) setActiveUsersCount(count);
+      if (!error && data !== null) setActiveUsersCount(data);
     };
 
     fetchActiveUsers();
     const interval = setInterval(fetchActiveUsers, 30000);
     return () => clearInterval(interval);
+  }, []);
+
+  // Refresh data when app returns from background
+  useEffect(() => {
+    const handleResume = () => fetchMessages();
+    window.addEventListener('app-resume', handleResume);
+    return () => window.removeEventListener('app-resume', handleResume);
   }, []);
 
   useEffect(() => {

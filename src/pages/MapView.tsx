@@ -7,6 +7,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
+import { isUserOnline } from "@/utils/userStatus";
 
 import maplibregl, { Map as MapLibreMap, Marker as MapLibreMarker, Popup as MapLibrePopup } from "maplibre-gl";
 
@@ -57,13 +58,6 @@ type VisibilityMode = "public" | "friends" | "friends_selected";
 const normalizeVisibilityMode = (v: unknown): VisibilityMode => {
   if (v === "public" || v === "friends" || v === "friends_selected") return v;
   return "friends";
-};
-
-// Check if user is online based on heartbeat
-// User is considered online if they have a heartbeat (app installed and logged in)
-// Only goes offline when explicitly logging out (which clears last_heartbeat_at)
-const isUserOnline = (lastHeartbeat: string | null | undefined): boolean => {
-  return lastHeartbeat != null;
 };
 
 /**
@@ -259,7 +253,7 @@ export const MapView: React.FC = () => {
   }, [brothers]);
 
   // ✅ NUEVO (mínimo): QH cerca REAL (distancia + radio + tu ubicación)
-  // Solo cuenta QH ACTIVOS (heartbeat reciente + tracking_enabled + no stealth_mode)
+  // Solo cuenta QH ACTIVOS (online + no stealth_mode)
   const nearbyBrothersCount = useMemo(() => {
     // Si no hay perfil o no hay ubicación actual, no podemos calcular cercanía real
     if (!profile) return 0;
@@ -273,9 +267,7 @@ export const MapView: React.FC = () => {
       if (b.lat == null || b.lng == null) continue;
       if (b.profile?.stealth_mode) continue; // doble seguro
 
-      // Usuario activo: heartbeat reciente AND tracking_enabled AND no stealth_mode
-      const isActive = isUserOnline(b.profile?.last_heartbeat_at) &&
-                       b.profile?.tracking_enabled !== false &&
+      const isActive = isUserOnline(b.profile) &&
                        b.profile?.stealth_mode !== true;
       if (!isActive) continue;
 
@@ -419,6 +411,13 @@ export const MapView: React.FC = () => {
       supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Refresh data when app returns from background
+  useEffect(() => {
+    const handleResume = () => fetchBrothers();
+    window.addEventListener('app-resume', handleResume);
+    return () => window.removeEventListener('app-resume', handleResume);
   }, []);
 
   const scheduleFetchBrothers = () => {
@@ -705,10 +704,7 @@ export const MapView: React.FC = () => {
         isNearby = distKm < 1;
       }
 
-      // Determine active status: active if heartbeat is recent AND tracking_enabled AND no stealth_mode
-      // Shows green if user has active session, red if manually logged out or disabled tracking
-      const isActive = isUserOnline(b.profile?.last_heartbeat_at) &&
-                       b.profile?.tracking_enabled !== false &&
+      const isActive = isUserOnline(b.profile) &&
                        b.profile?.stealth_mode !== true;
 
       // Remove old marker to update photo/proximity/status state

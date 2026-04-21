@@ -188,6 +188,13 @@ export function useUnreadCount() {
     syncNativeBadge(counts.total);
   }, [counts.total]);
 
+  // Refresh counts when app returns from background
+  useEffect(() => {
+    const handleResume = () => fetchUnreadCounts();
+    window.addEventListener('app-resume', handleResume);
+    return () => window.removeEventListener('app-resume', handleResume);
+  }, [fetchUnreadCounts]);
+
   return {
     counts,
     fetchUnreadCounts,
