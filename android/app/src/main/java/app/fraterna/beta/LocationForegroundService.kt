@@ -226,12 +226,6 @@ class LocationForegroundService : Service() {
         } catch (e: Exception) {
             android.util.Log.e("LocationService", "Error refreshing token: ${e.message}")
         }
-
-            // Load profile settings
-            loadProfileSettings()
-        } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Error parsing auth token: ${e.message}")
-        }
     }
 
     private fun loadProfileSettings() {
