@@ -11,7 +11,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     private var authToken: String?
     private var proximityCooldowns: [String: Date] = [:]
     private var trackingEnabled: Bool = true
-    private var proximityRadiusKm: Double = 1.0
+    private var proximityRadiusKm: Double = 5.0
     private var proximityAlertsEnabled: Bool = true
 
     override init() {
@@ -41,9 +41,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
 
         locationManager.requestAlwaysAuthorization()
         locationManager.startUpdatingLocation()
-
-        // Register for significant location changes as fallback
         locationManager.startMonitoringSignificantLocationChanges()
+
+        // Load profile settings
+        loadProfileSettings()
     }
 
     func stopLocationUpdates() {
@@ -111,13 +112,43 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         }
     }
 
+    // MARK: - Profile Settings
+
+    private func loadProfileSettings() {
+        guard let userId = userId else { return }
+        refreshToken()
+        guard let token = authToken else { return }
+
+        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled"
+        guard let url = URL(string: urlString) else { return }
+        var request = URLRequest(url: url)
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            guard let self = self, let data = data, error == nil else { return }
+            do {
+                guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                      let profile = profiles.first else { return }
+                if let radius = profile["proximity_radius_km"] as? Double {
+                    self.proximityRadiusKm = radius
+                }
+                if let alerts = profile["proximity_alerts_enabled"] as? Bool {
+                    self.proximityAlertsEnabled = alerts
+                }
+            } catch {
+                print("[LocationManager] Error loading profile settings: \(error)")
+            }
+        }.resume()
+    }
+
     // MARK: - Heartbeat
 
     private func sendHeartbeat(userId: String, authToken: String) {
         let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
-        request.setValue("bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
@@ -131,11 +162,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     }
 
     private func clearHeartbeat() {
-        guard let userId = userId, let authToken = authToken else { return }
+        refreshToken()
+        guard let userId = userId, let token = authToken else { return }
         let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
-        request.setValue("bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
@@ -146,27 +178,34 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         URLSession.shared.dataTask(with: request).resume()
     }
 
-    // MARK: - Location Update
+    // MARK: - Location Update (uses locations table with upsert, matching web/Android)
 
     private func updateLocation(userId: String, authToken: String, location: CLLocation) {
-        let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
+        let url = URL(string: "\(supabaseUrl)/rest/v1/locations?user_id=eq.\(userId)")!
         var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.setValue("bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+
+        let clampedAccuracy = max(100, min(300, Int(location.horizontalAccuracy.rounded())))
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
 
         let body: [String: Any] = [
-            "latitude": location.coordinate.latitude,
-            "longitude": location.coordinate.longitude
+            "user_id": userId,
+            "lat": location.coordinate.latitude,
+            "lng": location.coordinate.longitude,
+            "accuracy_meters": clampedAccuracy,
+            "updated_at": formatter.string(from: Date())
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request).resume()
     }
 
-    // MARK: - Proximity Alerts
+    // MARK: - Proximity Alerts (queries locations table)
 
     private func checkProximityAlerts(userId: String, authToken: String, location: CLLocation) {
         guard proximityAlertsEnabled else { return }
@@ -175,20 +214,24 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         let lng = location.coordinate.longitude
         let radius = proximityRadiusKm * 0.01 // approximate degrees
 
-        let urlString = "\(supabaseUrl)/rest/v1/profiles?select=id,last_heartbeat_at,tracking_enabled,stealth_mode,proximity_alerts_enabled,proximity_radius_km,latitude,longitude&latitude=not.is.null&longitude=not.is.null&id=neq.\(userId)&latitude=gt.\(lat - radius)&latitude=lt.\(lat + radius)&longitude=gt.\(lng - radius)&longitude=lt.\(lng + radius)"
+        // Query locations table joined with profiles for status checks
+        let urlString = "\(supabaseUrl)/rest/v1/locations?select=user_id,lat,lng,profile:profiles!locations_user_id_fkey(id,full_name,tracking_enabled,stealth_mode,last_heartbeat_at,proximity_alerts_enabled,proximity_radius_km)&lat=not.is.null&lng=not.is.null&user_id=neq.\(userId)&lat=gt.\(lat - radius)&lat=lt.\(lat + radius)&lng=gt.\(lng - radius)&lng=lt.\(lng + radius)"
 
         guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
-        request.setValue("bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self, let data = data, error == nil else { return }
 
+            // Reload profile settings periodically
+            self.loadProfileSettings()
+
             do {
-                guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
-                for profile in profiles {
-                    self.processProximityAlert(userId: userId, profile: profile, myLocation: location)
+                guard let locationEntries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+                for entry in locationEntries {
+                    self.processProximityAlert(myLocation: location, entry: entry)
                 }
             } catch {
                 print("[LocationManager] Proximity parse error: \(error)")
@@ -196,14 +239,19 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         }.resume()
     }
 
-    private func processProximityAlert(userId: String, profile: [String: Any], myLocation: CLLocation) {
-        guard let profileId = profile["id"] as? String else { return }
+    private func processProximityAlert(myLocation: CLLocation, entry: [String: Any]) {
+        guard let theirLat = entry["lat"] as? Double,
+              let theirLng = entry["lng"] as? Double else { return }
 
-        let trackingEnabled = profile["tracking_enabled"] as? Bool ?? true
-        if !trackingEnabled { return }
+        // Extract nested profile
+        guard let profile = entry["profile"] as? [String: Any],
+              let profileId = profile["id"] as? String else { return }
 
-        let stealthMode = profile["stealth_mode"] as? Bool ?? false
-        if stealthMode { return }
+        let theirTracking = profile["tracking_enabled"] as? Bool ?? false
+        if !theirTracking { return }
+
+        let theirStealth = profile["stealth_mode"] as? Bool ?? false
+        if theirStealth { return }
 
         guard let lastHeartbeat = profile["last_heartbeat_at"] as? String else { return }
 
@@ -215,16 +263,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         guard heartbeatDate > threeMinAgo else { return }
 
         // Check distance
-        guard let lat = profile["latitude"] as? Double,
-              let lng = profile["longitude"] as? Double else { return }
-        let theirLocation = CLLocation(latitude: lat, longitude: lng)
+        let theirLocation = CLLocation(latitude: theirLat, longitude: theirLng)
         let distance = myLocation.distance(from: theirLocation) / 1000.0 // km
 
-        let theirRadius = profile["proximity_radius_km"] as? Double ?? 1.0
+        let theirRadius = profile["proximity_radius_km"] as? Double ?? 5.0
+        let theirAlerts = profile["proximity_alerts_enabled"] as? Bool ?? true
         let myRadius = proximityRadiusKm
         let alertRadius = min(myRadius, theirRadius)
 
-        guard distance <= alertRadius else { return }
+        guard distance <= alertRadius, theirAlerts else { return }
 
         // Check cooldown (2 minutes per user)
         if let lastAlert = proximityCooldowns[profileId],

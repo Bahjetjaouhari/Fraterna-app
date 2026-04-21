@@ -129,7 +129,7 @@ const EmergencyChat = () => {
     const { data, error } = await supabase
       .rpc('get_online_users_count_by_city', { city_param: myCity });
 
-    if (!error && data != null) setActiveUsersCount(data);
+    if (!error && data !== null) setActiveUsersCount(data);
   };
 
   useEffect(() => {

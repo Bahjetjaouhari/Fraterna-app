@@ -215,6 +215,17 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
+  // Sync tracking/stealth settings to native iOS location service
+  useEffect(() => {
+    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'ios' || !profile) return;
+    const enabled = profile.tracking_enabled && !profile.stealth_mode;
+    try {
+      Capacitor.nativeCallback('LocationService', 'setTrackingEnabled', { enabled });
+    } catch (e) {
+      console.error('Failed to sync tracking state to iOS:', e);
+    }
+  }, [profile?.tracking_enabled, profile?.stealth_mode]);
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
