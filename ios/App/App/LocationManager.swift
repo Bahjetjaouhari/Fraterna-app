@@ -80,16 +80,35 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         guard let location = locations.last,
               let userId = userId,
-              let authToken = authToken,
               trackingEnabled else { return }
 
-        sendHeartbeat(userId: userId, authToken: authToken)
-        updateLocation(userId: userId, authToken: authToken, location: location)
-        checkProximityAlerts(userId: userId, authToken: authToken, location: location)
+        // Re-read token from UserDefaults to pick up refreshed tokens
+        refreshToken()
+
+        guard let currentToken = authToken else { return }
+
+        sendHeartbeat(userId: userId, authToken: currentToken)
+        updateLocation(userId: userId, authToken: currentToken, location: location)
+        checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("[LocationManager] Location error: \(error.localizedDescription)")
+    }
+
+    // MARK: - Token Refresh
+
+    private func refreshToken() {
+        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+        guard let jsonString = UserDefaults.standard.string(forKey: key) else { return }
+        guard let jsonData = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let newToken = json["access_token"] as? String else { return }
+
+        if newToken != authToken {
+            authToken = newToken
+            print("[LocationManager] Token refreshed")
+        }
     }
 
     // MARK: - Heartbeat

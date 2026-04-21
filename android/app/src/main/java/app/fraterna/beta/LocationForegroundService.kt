@@ -213,6 +213,27 @@ class LocationForegroundService : Service() {
         }
     }
 
+    private fun refreshToken() {
+        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+        val accessToken = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
+        try {
+            val tokenJson = JSONObject(accessToken)
+            val newToken = tokenJson.optString("access_token", null)
+            if (newToken != null && newToken != bearerToken) {
+                bearerToken = newToken
+                android.util.Log.d("LocationService", "Token refreshed")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error refreshing token: ${e.message}")
+        }
+
+            // Load profile settings
+            loadProfileSettings()
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error parsing auth token: ${e.message}")
+        }
+    }
+
     private fun loadProfileSettings() {
         val userId = currentUserId ?: return
         val token = bearerToken ?: return
@@ -271,6 +292,8 @@ class LocationForegroundService : Service() {
 
     private fun sendHeartbeat() {
         val userId = currentUserId ?: return
+        // Re-read token from SharedPreferences to pick up refreshed tokens
+        refreshToken()
         val token = bearerToken ?: return
 
         serviceScope.launch {
@@ -305,6 +328,8 @@ class LocationForegroundService : Service() {
     private fun checkProximityAlerts(location: Location) {
         val settings = profileSettings
         val userId = currentUserId ?: return
+        // Re-read token to pick up refreshed tokens
+        refreshToken()
         val token = bearerToken ?: return
         val myLat = location.latitude
         val myLng = location.longitude
