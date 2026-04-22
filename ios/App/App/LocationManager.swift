@@ -3,7 +3,7 @@ import CoreLocation
 import UserNotifications
 
 @objc(LocationManager)
-class LocationManager: NSObject, CLLocationManagerDelegate {
+class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCenterDelegate {
     private let locationManager = CLLocationManager()
     private let supabaseUrl: String
     private let supabaseAnonKey: String
@@ -13,6 +13,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     private var trackingEnabled: Bool = true
     private var proximityRadiusKm: Double = 5.0
     private var proximityAlertsEnabled: Bool = true
+    private var heartbeatTimer: Timer?
+    private let heartbeatInterval: TimeInterval = 120 // 2 minutes when stationary
 
     override init() {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String,
@@ -30,6 +32,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     func startLocationUpdates(userId: String, authToken: String) {
         self.userId = userId
         self.authToken = authToken
+
+        // Set up notification delegate for foreground notifications
+        UNUserNotificationCenter.current().delegate = self
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -50,6 +55,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
     func stopLocationUpdates() {
         locationManager.stopUpdatingLocation()
         locationManager.stopMonitoringSignificantLocationChanges()
+        stopHeartbeatTimer()
         userId = nil
         authToken = nil
     }
@@ -62,6 +68,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         } else {
             locationManager.stopUpdatingLocation()
             locationManager.stopMonitoringSignificantLocationChanges()
+            stopHeartbeatTimer()
             clearHeartbeat()
         }
     }
@@ -76,6 +83,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
         locationManager.distanceFilter = 50.0
     }
 
+    // MARK: - UNUserNotificationCenterDelegate
+
+    func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Show notifications even when app is in foreground
+        completionHandler([.banner, .sound])
+    }
+
     // MARK: - CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
@@ -88,6 +102,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
 
         guard let currentToken = authToken else { return }
 
+        // Location updates are flowing, stop fallback heartbeat timer
+        stopHeartbeatTimer()
+
         sendHeartbeat(userId: userId, authToken: currentToken)
         updateLocation(userId: userId, authToken: currentToken, location: location)
         checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
@@ -95,6 +112,43 @@ class LocationManager: NSObject, CLLocationManagerDelegate {
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         print("[LocationManager] Location error: \(error.localizedDescription)")
+    }
+
+    func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
+        print("[LocationManager] Location updates paused (user stationary)")
+        // Start fallback heartbeat timer so user stays "online" even when stationary
+        startHeartbeatTimer()
+    }
+
+    func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
+        print("[LocationManager] Location updates resumed")
+        stopHeartbeatTimer()
+    }
+
+    // MARK: - Heartbeat Timer (fallback when stationary)
+
+    private func startHeartbeatTimer() {
+        stopHeartbeatTimer()
+        guard userId != nil else { return }
+
+        // Send an immediate heartbeat
+        refreshToken()
+        if let userId = userId, let token = authToken {
+            sendHeartbeat(userId: userId, authToken: token)
+        }
+
+        // Then send heartbeats every 2 minutes
+        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: heartbeatInterval, repeats: true) { [weak self] _ in
+            guard let self = self else { return }
+            self.refreshToken()
+            guard let userId = self.userId, let token = self.authToken else { return }
+            self.sendHeartbeat(userId: userId, authToken: token)
+        }
+    }
+
+    private func stopHeartbeatTimer() {
+        heartbeatTimer?.invalidate()
+        heartbeatTimer = nil
     }
 
     // MARK: - Token Refresh
