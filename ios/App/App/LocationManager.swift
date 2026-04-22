@@ -40,8 +40,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.allowsBackgroundLocationUpdates = true
         locationManager.showsBackgroundLocationIndicator = true
-        locationManager.pausesLocationUpdatesAutomatically = true // Saves battery when stationary; fallback heartbeat timer keeps user online
-        locationManager.activityType = .fitness // Better for walking/standing still detection
+        locationManager.pausesLocationUpdatesAutomatically = false // Never pause - location must update in background at all times
+        locationManager.activityType = .otherNavigation // Continuous tracking
         locationManager.distanceFilter = 10.0
 
         locationManager.requestAlwaysAuthorization()
