@@ -1,5 +1,6 @@
 package app.fraterna.beta
 
+import android.app.AlarmManager
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -11,6 +12,8 @@ import android.location.Location
 import android.os.Build
 import android.os.IBinder
 import android.os.Looper
+import android.os.PowerManager
+import android.util.Base64
 import androidx.core.app.NotificationCompat
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
@@ -62,6 +65,7 @@ class LocationForegroundService : Service() {
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private var locationCallback: LocationCallback? = null
     private val httpClient = OkHttpClient()
+    private var wakeLock: PowerManager.WakeLock? = null
 
     // User session data
     private var currentUserId: String? = null
@@ -148,6 +152,9 @@ class LocationForegroundService : Service() {
         isRunning = true
         startForeground(NOTIFICATION_ID, createNotification())
 
+        // Acquire partial WakeLock to prevent CPU from sleeping in Doze mode
+        acquireWakeLock()
+
         // Load user session
         loadUserSession()
 
@@ -165,6 +172,7 @@ class LocationForegroundService : Service() {
                 locationResult.lastLocation?.let { location ->
                     sendLocationToWebView(location)
                     sendHeartbeat()
+                    updateLocationInSupabase(location)
                     checkProximityAlerts(location)
                 }
             }
@@ -182,11 +190,31 @@ class LocationForegroundService : Service() {
         }
     }
 
+    private fun acquireWakeLock() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(
+            PowerManager.PARTIAL_WAKE_LOCK,
+            "fraterna:LocationServiceWakeLock"
+        ).apply {
+            acquire()
+        }
+    }
+
+    private fun releaseWakeLock() {
+        wakeLock?.let {
+            if (it.isHeld) {
+                it.release()
+            }
+        }
+        wakeLock = null
+    }
+
     private fun stopLocationUpdates() {
         isRunning = false
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
+        releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -213,18 +241,128 @@ class LocationForegroundService : Service() {
         }
     }
 
+    /**
+     * REAL token refresh: checks if the current JWT is about to expire,
+     * and if so, calls the Supabase auth endpoint to get a new one.
+     * Falls back to re-reading from SharedPreferences if the refresh call fails.
+     */
     private fun refreshToken() {
         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
-        val accessToken = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
+        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
+
         try {
-            val tokenJson = JSONObject(accessToken)
-            val newToken = tokenJson.optString("access_token", null)
-            if (newToken != null && newToken != bearerToken) {
-                bearerToken = newToken
-                android.util.Log.d("LocationService", "Token refreshed")
+            val tokenJson = JSONObject(storedJson)
+
+            // First: check if JS client already refreshed the token in storage
+            val storedAccessToken = tokenJson.optString("access_token", null)
+            if (storedAccessToken != null && storedAccessToken != bearerToken) {
+                bearerToken = storedAccessToken
+                android.util.Log.d("LocationService", "Token updated from storage (JS client refreshed)")
+            }
+
+            // Check if current token is expired or about to expire (within 5 minutes)
+            if (bearerToken != null && isTokenExpiringSoon(bearerToken!!, 300)) {
+                android.util.Log.d("LocationService", "Token expiring soon, refreshing via Supabase...")
+                val refreshToken = tokenJson.optString("refresh_token", null)
+                if (refreshToken != null) {
+                    performTokenRefresh(refreshToken, prefs)
+                } else {
+                    android.util.Log.e("LocationService", "No refresh_token found in stored session")
+                }
             }
         } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Error refreshing token: ${e.message}")
+            android.util.Log.e("LocationService", "Error in refreshToken: ${e.message}")
+        }
+    }
+
+    /**
+     * Decodes the JWT payload and checks if it expires within `thresholdSeconds`.
+     */
+    private fun isTokenExpiringSoon(token: String, thresholdSeconds: Long): Boolean {
+        try {
+            val parts = token.split(".")
+            if (parts.size != 3) return true // malformed JWT, assume expired
+
+            val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val payloadJson = JSONObject(payload)
+            val exp = payloadJson.optLong("exp", 0)
+            if (exp == 0L) return true
+
+            val nowSeconds = System.currentTimeMillis() / 1000
+            return (exp - nowSeconds) < thresholdSeconds
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error decoding JWT: ${e.message}")
+            return true // assume expired on error
+        }
+    }
+
+    /**
+     * Calls the Supabase auth endpoint to refresh the token using the refresh_token.
+     * Updates SharedPreferences and in-memory bearerToken + currentUserId.
+     */
+    private fun performTokenRefresh(refreshToken: String, prefs: android.content.SharedPreferences) {
+        try {
+            val body = JSONObject().apply {
+                put("refresh_token", refreshToken)
+            }
+
+            val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url("$supabaseUrl/auth/v1/token?grant_type=refresh_token")
+                .addHeader("apikey", supabaseAnonKey)
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val newSession = JSONObject(responseBody)
+                val newAccessToken = newSession.optString("access_token", null)
+                val newRefreshToken = newSession.optString("refresh_token", null)
+
+                if (newAccessToken != null) {
+                    bearerToken = newAccessToken
+                    android.util.Log.d("LocationService", "Token refreshed successfully via Supabase")
+
+                    // Update user ID in case it changed
+                    val userObj = newSession.optJSONObject("user")
+                    if (userObj != null) {
+                        currentUserId = userObj.optString("id", currentUserId)
+                    }
+
+                    // Rebuild the stored session JSON and save back to SharedPreferences
+                    // so the JS client also picks up the new tokens
+                    val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
+                    if (storedJson != null) {
+                        val storedSession = JSONObject(storedJson)
+                        storedSession.put("access_token", newAccessToken)
+                        if (newRefreshToken != null) {
+                            storedSession.put("refresh_token", newRefreshToken)
+                        }
+                        storedSession.put("expires_at", newSession.optLong("expires_at", 0))
+                        storedSession.put("expires_in", newSession.optInt("expires_in", 3600))
+                        storedSession.put("token_type", "bearer")
+
+                        prefs.edit()
+                            .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", storedSession.toString())
+                            .apply()
+
+                        android.util.Log.d("LocationService", "Updated token in SharedPreferences")
+                    }
+                }
+            } else {
+                android.util.Log.e("LocationService", "Token refresh failed: ${response.code} - $responseBody")
+                // If refresh fails with 400/401, the refresh token itself is invalid
+                // User needs to re-login, but we don't force logout from the service
+                if (response.code == 400 || response.code == 401) {
+                    android.util.Log.e("LocationService", "Refresh token is invalid. User needs to re-login.")
+                }
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Token refresh network error: ${e.message}")
         }
     }
 
@@ -286,7 +424,7 @@ class LocationForegroundService : Service() {
 
     private fun sendHeartbeat() {
         val userId = currentUserId ?: return
-        // Re-read token from SharedPreferences to pick up refreshed tokens
+        // Refresh token (real refresh if expired)
         refreshToken()
         val token = bearerToken ?: return
 
@@ -312,9 +450,62 @@ class LocationForegroundService : Service() {
                     android.util.Log.d("LocationService", "Heartbeat sent successfully")
                 } else {
                     android.util.Log.e("LocationService", "Heartbeat failed: ${response.code}")
+                    // If 401, token is expired — force a real refresh on next attempt
+                    if (response.code == 401) {
+                        android.util.Log.w("LocationService", "Got 401, forcing token refresh...")
+                        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+                        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
+                        if (storedJson != null) {
+                            val tokenJson = JSONObject(storedJson)
+                            val rt = tokenJson.optString("refresh_token", null)
+                            if (rt != null) performTokenRefresh(rt, prefs)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("LocationService", "Heartbeat error: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Sends the current location to the Supabase `locations` table via upsert.
+     * This is required so other users can see this user's position on the map.
+     */
+    private fun updateLocationInSupabase(location: Location) {
+        val userId = currentUserId ?: return
+        val token = bearerToken ?: return
+
+        serviceScope.launch {
+            try {
+                val accuracy = location.accuracy.toInt().coerceIn(100, 300)
+                val jsonBody = JSONObject().apply {
+                    put("user_id", userId)
+                    put("lat", location.latitude)
+                    put("lng", location.longitude)
+                    put("accuracy_meters", accuracy)
+                    put("updated_at", java.time.Instant.now().toString())
+                }
+
+                val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
+
+                val request = Request.Builder()
+                    .url("$supabaseUrl/rest/v1/locations?user_id=eq.$userId")
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("apikey", supabaseAnonKey)
+                    .addHeader("Content-Type", "application/json")
+                    .addHeader("Prefer", "resolution=merge-duplicates")
+                    .post(requestBody)
+                    .build()
+
+                val response = httpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    android.util.Log.d("LocationService", "Location updated in Supabase")
+                } else {
+                    android.util.Log.e("LocationService", "Location update failed: ${response.code}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("LocationService", "Location update error: ${e.message}")
             }
         }
     }
@@ -489,9 +680,31 @@ class LocationForegroundService : Service() {
         android.util.Log.d("LocationService", "Proximity notification shown for $brotherName")
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        android.util.Log.w("LocationService", "Task removed, scheduling restart...")
+        // Schedule restart via AlarmManager to survive task kill
+        val restartIntent = Intent(applicationContext, LocationForegroundService::class.java).apply {
+            action = ACTION_START
+        }
+        val pendingIntent = PendingIntent.getService(
+            applicationContext,
+            1,
+            restartIntent,
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
+        )
+        val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
+        alarmManager.set(
+            AlarmManager.RTC_WAKEUP,
+            System.currentTimeMillis() + 5000, // Restart in 5 seconds
+            pendingIntent
+        )
+    }
+
     override fun onDestroy() {
         super.onDestroy()
         isRunning = false
+        releaseWakeLock()
         serviceScope.cancel()
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
