@@ -765,6 +765,9 @@ export const MapView: React.FC = () => {
       const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy)));
 
       try {
+        // Send heartbeat FIRST to ensure user is "active" before location upsert
+        await supabase.from("profiles").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", user.id);
+
         const { error } = await supabase
           .from("locations")
           .upsert(
@@ -779,8 +782,6 @@ export const MapView: React.FC = () => {
           );
 
         if (error) throw error;
-
-        await supabase.from("profiles").update({ last_seen_at: new Date().toISOString() }).eq("id", user.id);
 
         checkProximityAlerts(brothers);
       } catch (e) {

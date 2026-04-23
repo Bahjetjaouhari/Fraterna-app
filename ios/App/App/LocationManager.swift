@@ -35,6 +35,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         // Set up notification delegate for foreground notifications
         UNUserNotificationCenter.current().delegate = self
+        
+        // Request notification permission for proximity alerts
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
+            if let error = error {
+                print("[LocationManager] Notification permission error: \(error)")
+            }
+            print("[LocationManager] Notification permission granted: \(granted)")
+        }
 
         locationManager.delegate = self
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -371,13 +379,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // MARK: - Location Update (uses locations table with upsert, matching web/Android)
 
     private func updateLocation(userId: String, authToken: String, location: CLLocation) {
-        let url = URL(string: "\(supabaseUrl)/rest/v1/locations?user_id=eq.\(userId)")!
+        let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("resolution=merge-duplicates", forHTTPHeaderField: "Prefer")
+        request.setValue("resolution=merge-duplicates,return=minimal", forHTTPHeaderField: "Prefer")
 
         let clampedAccuracy = max(100, min(300, Int(location.horizontalAccuracy.rounded())))
         let formatter = ISO8601DateFormatter()

@@ -490,11 +490,11 @@ class LocationForegroundService : Service() {
                 val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
 
                 val request = Request.Builder()
-                    .url("$supabaseUrl/rest/v1/locations?user_id=eq.$userId")
+                    .url("$supabaseUrl/rest/v1/locations?on_conflict=user_id")
                     .addHeader("Authorization", "Bearer $token")
                     .addHeader("apikey", supabaseAnonKey)
                     .addHeader("Content-Type", "application/json")
-                    .addHeader("Prefer", "resolution=merge-duplicates")
+                    .addHeader("Prefer", "resolution=merge-duplicates,return=minimal")
                     .post(requestBody)
                     .build()
 
