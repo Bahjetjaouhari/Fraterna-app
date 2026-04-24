@@ -2,8 +2,12 @@ package app.fraterna.beta
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.os.PowerManager
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 import com.getcapacitor.*
 import com.getcapacitor.annotation.CapacitorPlugin
@@ -50,11 +54,39 @@ class LocationPlugin : Plugin() {
             }
         }
 
+        // Request battery optimization exemption so Doze mode doesn't throttle heartbeat requests
+        requestBatteryOptimizationExemption(context)
+
         try {
             LocationForegroundService.start(context)
             call.resolve()
         } catch (e: Exception) {
             call.reject("Failed to start location service: ${e.message}")
+        }
+    }
+
+    /**
+     * Requests the system to exempt this app from battery optimizations (Doze mode).
+     * Without this, Android will throttle network requests after a few minutes of screen-off,
+     * causing heartbeat failures and the user appearing "offline".
+     */
+    private fun requestBatteryOptimizationExemption(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                    android.util.Log.d("LocationPlugin", "Requested battery optimization exemption")
+                } catch (e: Exception) {
+                    android.util.Log.e("LocationPlugin", "Failed to request battery optimization: ${e.message}")
+                }
+            } else {
+                android.util.Log.d("LocationPlugin", "Already exempt from battery optimizations")
+            }
         }
     }
 

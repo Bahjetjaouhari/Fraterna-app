@@ -105,6 +105,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (isSendingHeartbeatRef.current) return;
     isSendingHeartbeatRef.current = true;
 
+    // Safety timeout: reset the flag after 10 seconds in case the request hangs
+    // (e.g. app going to background while request is in flight)
+    const timeoutId = setTimeout(() => {
+      isSendingHeartbeatRef.current = false;
+    }, 10000);
+
     try {
       await supabase
         .from('profiles')
@@ -113,6 +119,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     } catch (error) {
       console.error('Heartbeat error:', error);
     } finally {
+      clearTimeout(timeoutId);
       isSendingHeartbeatRef.current = false;
     }
   };

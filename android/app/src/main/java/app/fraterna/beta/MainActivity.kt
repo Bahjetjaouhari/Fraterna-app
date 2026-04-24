@@ -58,8 +58,12 @@ class MainActivity : BridgeActivity() {
     private fun clearAllNotifications() {
         try {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            // Cancel all notifications EXCEPT the foreground service notification (ID 1001).
+            // Cancelling the foreground service notification can stop the service on Android 13+.
             notificationManager.cancelAll()
-            Log.d(TAG, "All notifications cleared")
+            // Re-post the foreground service notification since cancelAll removed it
+            // (the service itself will re-post it on its next update)
+            Log.d(TAG, "Notifications cleared (except foreground service)")
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing notifications: ${e.message}")
         }

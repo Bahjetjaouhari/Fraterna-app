@@ -3,6 +3,7 @@ export interface UserStatusProfile {
   tracking_enabled: boolean | null;
 }
 
+// Must match the 3-minute threshold used in SQL is_user_active()
 const THREE_MINUTES_MS = 3 * 60 * 1000;
 
 export function isUserOnline(profile: UserStatusProfile): boolean {

@@ -42,14 +42,17 @@ export const LocationServiceWrapper = () => {
     manageService();
   }, [user, profile?.tracking_enabled, profile?.stealth_mode, isRunning, startService, stopService]);
 
-  // Cleanup on unmount
+  // Cleanup on unmount — but only stop the service if the user is logging out.
+  // On Android, the foreground service must keep running when the app is in background.
+  // React may unmount this component during Suspense transitions or memory pressure,
+  // which should NOT stop the background service.
   useEffect(() => {
     return () => {
-      if (Capacitor.isNativePlatform() && isRunning) {
-        stopService();
-      }
+      // Don't stop the service on unmount — the foreground service must continue
+      // running when the app is in background. The service will be stopped
+      // explicitly when the user logs out (via useAuth.signOut).
     };
-  }, [isRunning, stopService]);
+  }, []);
 
   // This component doesn't render anything
   return null;

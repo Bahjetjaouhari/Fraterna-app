@@ -38,6 +38,7 @@ class LocationForegroundService : Service() {
         const val ACTION_START = "app.fraterna.beta.action.START_LOCATION"
         const val ACTION_STOP = "app.fraterna.beta.action.STOP_LOCATION"
 
+        @Volatile
         private var isRunning = false
 
         fun isServiceRunning(): Boolean = isRunning
@@ -67,8 +68,10 @@ class LocationForegroundService : Service() {
     private val httpClient = OkHttpClient()
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // User session data
+    // User session data (accessed from multiple threads)
+    @Volatile
     private var currentUserId: String? = null
+    @Volatile
     private var bearerToken: String? = null
     private var profileSettings: ProfileSettings? = null
 
@@ -92,7 +95,10 @@ class LocationForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        when (intent?.action) {
+        // When Android restarts the service after killing it, intent is null.
+        // Default to ACTION_START so the service resumes tracking.
+        val action = intent?.action ?: ACTION_START
+        when (action) {
             ACTION_START -> startLocationUpdates()
             ACTION_STOP -> stopLocationUpdates()
         }
@@ -224,7 +230,12 @@ class LocationForegroundService : Service() {
         val accessToken = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
 
         if (accessToken == null) {
-            android.util.Log.d("LocationService", "No auth token found")
+            android.util.Log.w("LocationService", "No auth token found, scheduling retry in 10s...")
+            // Token may not be written to SharedPreferences yet. Retry after a delay.
+            serviceScope.launch {
+                kotlinx.coroutines.delay(10000)
+                loadUserSession()
+            }
             return
         }
 
@@ -234,8 +245,29 @@ class LocationForegroundService : Service() {
             currentUserId = userObj?.optString("id", null)
             bearerToken = tokenJson.optString("access_token", null)
 
-            // Load profile settings
-            loadProfileSettings()
+            if (currentUserId == null) {
+                // Try to extract user ID from JWT payload (more reliable than stored user object)
+                bearerToken?.let { token ->
+                    val parts = token.split(".")
+                    if (parts.size == 3) {
+                        val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+                        val payloadJson = JSONObject(payload)
+                        currentUserId = payloadJson.optString("sub", null)
+                    }
+                }
+            }
+
+            if (currentUserId != null && bearerToken != null) {
+                android.util.Log.d("LocationService", "Session loaded: userId=$currentUserId")
+                // Load profile settings
+                loadProfileSettings()
+            } else {
+                android.util.Log.w("LocationService", "Incomplete session data, scheduling retry...")
+                serviceScope.launch {
+                    kotlinx.coroutines.delay(10000)
+                    loadUserSession()
+                }
+            }
         } catch (e: Exception) {
             android.util.Log.e("LocationService", "Error parsing auth token: ${e.message}")
         }
@@ -424,12 +456,13 @@ class LocationForegroundService : Service() {
 
     private fun sendHeartbeat() {
         val userId = currentUserId ?: return
-        // Refresh token (real refresh if expired)
-        refreshToken()
-        val token = bearerToken ?: return
 
         serviceScope.launch {
             try {
+                // Refresh token INSIDE the coroutine (on IO dispatcher) — never block main thread
+                refreshToken()
+                val token = bearerToken ?: return@launch
+
                 val jsonBody = JSONObject().apply {
                     put("last_heartbeat_at", java.time.Instant.now().toString())
                 }
@@ -450,7 +483,6 @@ class LocationForegroundService : Service() {
                     android.util.Log.d("LocationService", "Heartbeat sent successfully")
                 } else {
                     android.util.Log.e("LocationService", "Heartbeat failed: ${response.code}")
-                    // If 401, token is expired — force a real refresh on next attempt
                     if (response.code == 401) {
                         android.util.Log.w("LocationService", "Got 401, forcing token refresh...")
                         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
@@ -474,10 +506,13 @@ class LocationForegroundService : Service() {
      */
     private fun updateLocationInSupabase(location: Location) {
         val userId = currentUserId ?: return
-        val token = bearerToken ?: return
 
         serviceScope.launch {
             try {
+                // Refresh token INSIDE the coroutine (on IO dispatcher)
+                refreshToken()
+                val token = bearerToken ?: return@launch
+
                 val accuracy = location.accuracy.toInt().coerceIn(100, 300)
                 val jsonBody = JSONObject().apply {
                     put("user_id", userId)
@@ -503,6 +538,17 @@ class LocationForegroundService : Service() {
                     android.util.Log.d("LocationService", "Location updated in Supabase")
                 } else {
                     android.util.Log.e("LocationService", "Location update failed: ${response.code}")
+                    // Handle 401 — force token refresh (same as sendHeartbeat)
+                    if (response.code == 401) {
+                        android.util.Log.w("LocationService", "Got 401 on location update, forcing token refresh...")
+                        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+                        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
+                        if (storedJson != null) {
+                            val tokenJson = JSONObject(storedJson)
+                            val rt = tokenJson.optString("refresh_token", null)
+                            if (rt != null) performTokenRefresh(rt, prefs)
+                        }
+                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("LocationService", "Location update error: ${e.message}")
@@ -513,14 +559,15 @@ class LocationForegroundService : Service() {
     private fun checkProximityAlerts(location: Location) {
         val settings = profileSettings
         val userId = currentUserId ?: return
-        // Re-read token to pick up refreshed tokens
-        refreshToken()
-        val token = bearerToken ?: return
         val myLat = location.latitude
         val myLng = location.longitude
 
         serviceScope.launch {
             try {
+                // Refresh token INSIDE the coroutine (on IO dispatcher)
+                refreshToken()
+                val token = bearerToken ?: return@launch
+
                 // First, reload profile settings to get latest values
                 val settingsRequest = Request.Builder()
                     .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled")
@@ -564,12 +611,6 @@ class LocationForegroundService : Service() {
                 }
 
                 // Fetch nearby users with their locations
-                // We need users who:
-                // 1. Are not the current user
-                // 2. Have tracking_enabled = true
-                // 3. Don't have stealth_mode = true
-                // 4. Have a recent heartbeat (online)
-                // 5. Have a location
                 val request = Request.Builder()
                     .url("""
                         $supabaseUrl/rest/v1/locations?select=*,profile:profiles!locations_user_id_fkey(id,full_name,stealth_mode,tracking_enabled,last_heartbeat_at)&user_id=neq.$userId
@@ -680,10 +721,7 @@ class LocationForegroundService : Service() {
         android.util.Log.d("LocationService", "Proximity notification shown for $brotherName")
     }
 
-    override fun onTaskRemoved(rootIntent: Intent?) {
-        super.onTaskRemoved(rootIntent)
-        android.util.Log.w("LocationService", "Task removed, scheduling restart...")
-        // Schedule restart via AlarmManager to survive task kill
+    private fun scheduleRestart() {
         val restartIntent = Intent(applicationContext, LocationForegroundService::class.java).apply {
             action = ACTION_START
         }
@@ -694,11 +732,28 @@ class LocationForegroundService : Service() {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
         )
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
-        alarmManager.set(
-            AlarmManager.RTC_WAKEUP,
-            System.currentTimeMillis() + 5000, // Restart in 5 seconds
-            pendingIntent
-        )
+
+        // Use setExactAndAllowWhileIdle() on API 23+ so the alarm fires in Doze mode.
+        // On older versions, fall back to set().
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            alarmManager.setExactAndAllowWhileIdle(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 5000,
+                pendingIntent
+            )
+        } else {
+            alarmManager.set(
+                AlarmManager.RTC_WAKEUP,
+                System.currentTimeMillis() + 5000,
+                pendingIntent
+            )
+        }
+    }
+
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        super.onTaskRemoved(rootIntent)
+        android.util.Log.w("LocationService", "Task removed, scheduling restart...")
+        scheduleRestart()
     }
 
     override fun onDestroy() {
@@ -709,5 +764,8 @@ class LocationForegroundService : Service() {
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
+        // Schedule restart so the service recovers from system-initiated kills
+        android.util.Log.w("LocationService", "Service destroyed, scheduling restart...")
+        scheduleRestart()
     }
 }

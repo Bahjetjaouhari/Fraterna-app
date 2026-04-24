@@ -13,6 +13,12 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         FirebaseApp.configure()
         Messaging.messaging().delegate = self
 
+        // If iOS launched the app in the background for location updates,
+        // the LocationManager must be started BEFORE the webview loads.
+        if launchOptions?[.location] != nil {
+            print("[AppDelegate] App launched for location updates — will restore LocationManager when JS initializes")
+        }
+
         return true
     }
 

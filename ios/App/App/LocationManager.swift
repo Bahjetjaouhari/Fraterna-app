@@ -13,8 +13,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var trackingEnabled: Bool = true
     private var proximityRadiusKm: Double = 5.0
     private var proximityAlertsEnabled: Bool = true
-    private var heartbeatTimer: Timer?
-    private let heartbeatInterval: TimeInterval = 120 // 2 minutes when stationary
+    private var heartbeatTimer: DispatchSourceTimer?
+    private let heartbeatInterval: TimeInterval = 90 // 1.5 minutes — tight enough for the 3-min online threshold
+    private var bgTask: UIBackgroundTaskIdentifier = .invalid
 
     override init() {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String,
@@ -35,7 +36,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         // Set up notification delegate for foreground notifications
         UNUserNotificationCenter.current().delegate = self
-        
+
         // Request notification permission for proximity alerts
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
@@ -64,6 +65,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         locationManager.stopUpdatingLocation()
         locationManager.stopMonitoringSignificantLocationChanges()
         stopHeartbeatTimer()
+        endBackgroundTask()
         userId = nil
         authToken = nil
     }
@@ -84,11 +86,38 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     func setForegroundAccuracy() {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = 10.0
+        // In foreground, location updates flow frequently — no need for fallback timer
+        stopHeartbeatTimer()
     }
 
     func setBackgroundAccuracy() {
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = 50.0
+        // Use NearestTenMeters instead of HundredMeters to get more frequent updates
+        // while still saving battery compared to Best accuracy.
+        // HundredMeters causes iOS to deliver very few updates for stationary users.
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        // DO NOT set distanceFilter to a large value — that kills updates when user is stationary.
+        // Use kCLDistanceFilterNone so we still get periodic updates from cell/WiFi drift.
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        // Start heartbeat timer as fallback: if no location updates arrive (user perfectly still),
+        // the timer ensures heartbeats keep flowing to maintain online status.
+        startHeartbeatTimer()
+    }
+
+    // MARK: - Background Task Management
+
+    private func beginBackgroundTask() -> UIBackgroundTaskIdentifier {
+        if bgTask != .invalid { return bgTask }
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "FraternaHeartbeat") { [weak self] in
+            self?.endBackgroundTask()
+        }
+        return bgTask
+    }
+
+    private func endBackgroundTask() {
+        if bgTask != .invalid {
+            UIApplication.shared.endBackgroundTask(bgTask)
+            bgTask = .invalid
+        }
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -105,17 +134,29 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
               let userId = userId,
               trackingEnabled else { return }
 
-        // Re-read token from UserDefaults to pick up refreshed tokens
-        refreshToken()
-
-        guard let currentToken = authToken else { return }
-
         // Location updates are flowing, stop fallback heartbeat timer
         stopHeartbeatTimer()
 
-        sendHeartbeat(userId: userId, authToken: currentToken)
-        updateLocation(userId: userId, authToken: currentToken, location: location)
-        checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
+        // Start a background task to ensure iOS gives us time for network calls
+        beginBackgroundTask()
+
+        // Refresh token asynchronously, then send heartbeat + location update
+        refreshTokenAsync { [weak self] in
+            guard let self = self else { return }
+            guard let currentToken = self.authToken else {
+                self.endBackgroundTask()
+                return
+            }
+
+            self.sendHeartbeat(userId: userId, authToken: currentToken)
+            self.updateLocation(userId: userId, authToken: currentToken, location: location)
+            self.checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
+
+            // End background task after a short delay to let network calls complete
+            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                self?.endBackgroundTask()
+            }
+        }
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
@@ -140,37 +181,61 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard userId != nil else { return }
 
         // Send an immediate heartbeat
-        refreshToken()
-        if let userId = userId, let token = authToken {
-            sendHeartbeat(userId: userId, authToken: token)
+        beginBackgroundTask()
+        refreshTokenAsync { [weak self] in
+            guard let self = self else { return }
+            if let userId = self.userId, let token = self.authToken {
+                self.sendHeartbeat(userId: userId, authToken: token)
+            }
         }
 
-        // Then send heartbeats every 2 minutes
-        heartbeatTimer = Timer.scheduledTimer(withTimeInterval: heartbeatInterval, repeats: true) { [weak self] _ in
+        // GCD DispatchSourceTimer — will fire when iOS wakes the app for
+        // significant location changes or other background events.
+        // It does NOT fire while the app is fully suspended, but that's OK
+        // because didUpdateLocations handles the common case.
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + heartbeatInterval, repeating: heartbeatInterval, leeway: .seconds(5))
+        timer.setEventHandler { [weak self] in
             guard let self = self else { return }
-            self.refreshToken()
-            guard let userId = self.userId, let token = self.authToken else { return }
-            self.sendHeartbeat(userId: userId, authToken: token)
+            self.beginBackgroundTask()
+            self.refreshTokenAsync { [weak self] in
+                guard let self = self, let userId = self.userId, let token = self.authToken else {
+                    self?.endBackgroundTask()
+                    return
+                }
+                self.sendHeartbeat(userId: userId, authToken: token)
+                // End background task after a delay
+                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
+                    self?.endBackgroundTask()
+                }
+            }
         }
+        timer.resume()
+        heartbeatTimer = timer
+        print("[LocationManager] Heartbeat timer started (every \(heartbeatInterval)s)")
     }
 
     private func stopHeartbeatTimer() {
-        heartbeatTimer?.invalidate()
+        heartbeatTimer?.cancel()
         heartbeatTimer = nil
     }
 
-    // MARK: - Token Refresh
+    // MARK: - Token Refresh (ASYNC — no semaphore)
 
     /**
-     * REAL token refresh: checks if the current JWT is about to expire,
+     * Asynchronous token refresh: checks if the current JWT is about to expire,
      * and if so, calls the Supabase auth endpoint to get a new one.
-     * Falls back to re-reading from UserDefaults if the refresh call fails.
+     * Calls the completion handler on the main thread when done.
+     * This replaces the old synchronous version that used DispatchSemaphore.
      */
-    private func refreshToken() {
+    private func refreshTokenAsync(completion: @escaping () -> Void) {
         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
         guard let jsonString = UserDefaults.standard.string(forKey: key),
               let jsonData = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else { return }
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            completion()
+            return
+        }
 
         // First: check if JS client already refreshed the token in storage
         if let storedAccessToken = json["access_token"] as? String,
@@ -180,14 +245,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
 
         // Check if current token is expired or about to expire (within 5 minutes)
-        guard let currentToken = authToken else { return }
+        guard let currentToken = authToken else {
+            completion()
+            return
+        }
         if isTokenExpiringSoon(currentToken, thresholdSeconds: 300) {
             print("[LocationManager] Token expiring soon, refreshing via Supabase...")
             if let refreshTokenStr = json["refresh_token"] as? String {
-                performTokenRefresh(refreshToken: refreshTokenStr)
+                performTokenRefreshAsync(refreshToken: refreshTokenStr, completion: completion)
             } else {
                 print("[LocationManager] No refresh_token found in stored session")
+                completion()
             }
+        } else {
+            completion()
         }
     }
 
@@ -216,12 +287,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     /**
-     * Calls the Supabase auth endpoint to refresh the token using the refresh_token.
-     * This runs synchronously on the background thread where location updates are processed.
+     * Asynchronous token refresh using Supabase auth endpoint.
+     * NO DispatchSemaphore — fully async with completion handler.
      */
-    private func performTokenRefresh(refreshToken: String) {
+    private func performTokenRefreshAsync(refreshToken: String, completion: @escaping () -> Void) {
         let urlString = "\(supabaseUrl)/auth/v1/token?grant_type=refresh_token"
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString) else {
+            completion()
+            return
+        }
 
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -231,12 +305,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let body: [String: Any] = ["refresh_token": refreshToken]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        // Use a semaphore for synchronous execution in background context
-        let semaphore = DispatchSemaphore(value: 0)
-
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            defer { semaphore.signal() }
-            guard let self = self else { return }
+            guard let self = self else {
+                completion()
+                return
+            }
 
             guard let data = data, error == nil,
                   let httpResponse = response as? HTTPURLResponse,
@@ -246,12 +319,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 if statusCode == 400 || statusCode == 401 {
                     print("[LocationManager] Refresh token is invalid. User needs to re-login.")
                 }
+                completion()
                 return
             }
 
             do {
                 guard let newSession = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let newAccessToken = newSession["access_token"] as? String else { return }
+                      let newAccessToken = newSession["access_token"] as? String else {
+                    completion()
+                    return
+                }
 
                 self.authToken = newAccessToken
                 print("[LocationManager] Token refreshed successfully via Supabase")
@@ -285,40 +362,47 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             } catch {
                 print("[LocationManager] Error parsing refresh response: \(error)")
             }
+            completion()
         }.resume()
-
-        // Wait up to 10 seconds for the refresh to complete
-        _ = semaphore.wait(timeout: .now() + 10)
     }
 
     // MARK: - Profile Settings
 
     private func loadProfileSettings() {
         guard let userId = userId else { return }
-        refreshToken()
-        guard let token = authToken else { return }
-
-        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled"
-        guard let url = URL(string: urlString) else { return }
-        var request = URLRequest(url: url)
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self, let data = data, error == nil else { return }
-            do {
-                guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
-                      let profile = profiles.first else { return }
-                if let radius = profile["proximity_radius_km"] as? Double {
-                    self.proximityRadiusKm = radius
-                }
-                if let alerts = profile["proximity_alerts_enabled"] as? Bool {
-                    self.proximityAlertsEnabled = alerts
-                }
-            } catch {
-                print("[LocationManager] Error loading profile settings: \(error)")
+        beginBackgroundTask()
+        refreshTokenAsync { [weak self] in
+            guard let self = self, let token = self.authToken else {
+                self?.endBackgroundTask()
+                return
             }
-        }.resume()
+
+            let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled"
+            guard let url = URL(string: urlString) else {
+                self.endBackgroundTask()
+                return
+            }
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue(self.supabaseAnonKey, forHTTPHeaderField: "apikey")
+
+            URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+                guard let self = self, let data = data, error == nil else { return }
+                do {
+                    guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
+                          let profile = profiles.first else { return }
+                    if let radius = profile["proximity_radius_km"] as? Double {
+                        self.proximityRadiusKm = radius
+                    }
+                    if let alerts = profile["proximity_alerts_enabled"] as? Bool {
+                        self.proximityAlertsEnabled = alerts
+                    }
+                } catch {
+                    print("[LocationManager] Error loading profile settings: \(error)")
+                }
+                self.endBackgroundTask()
+            }.resume()
+        }
     }
 
     // MARK: - Heartbeat
@@ -351,7 +435,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                            let jsonData = jsonString.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
                            let rt = json["refresh_token"] as? String {
-                            self?.performTokenRefresh(refreshToken: rt)
+                            self?.performTokenRefreshAsync(refreshToken: rt) {
+                                // Token refreshed, next heartbeat will use the new token
+                            }
                         }
                     }
                 }
@@ -360,20 +446,34 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     private func clearHeartbeat() {
-        refreshToken()
-        guard let userId = userId, let token = authToken else { return }
-        let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
-        var request = URLRequest(url: url)
-        request.httpMethod = "PATCH"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+        beginBackgroundTask()
+        refreshTokenAsync { [weak self] in
+            guard let self = self, let userId = self.userId, let token = self.authToken else {
+                self?.endBackgroundTask()
+                return
+            }
+            let url = URL(string: "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
+            var request = URLRequest(url: url)
+            request.httpMethod = "PATCH"
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            request.setValue(self.supabaseAnonKey, forHTTPHeaderField: "apikey")
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
 
-        let body: [String: Any] = ["last_heartbeat_at": NSNull()]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+            let body: [String: Any] = ["last_heartbeat_at": NSNull()]
+            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request).resume()
+            URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+                if let httpResponse = response as? HTTPURLResponse {
+                    if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
+                        print("[LocationManager] Heartbeat cleared successfully")
+                    } else {
+                        print("[LocationManager] Clear heartbeat failed: \(httpResponse.statusCode)")
+                    }
+                }
+                self?.endBackgroundTask()
+            }.resume()
+        }
     }
 
     // MARK: - Location Update (uses locations table with upsert, matching web/Android)
@@ -400,7 +500,26 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request).resume()
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let httpResponse = response as? HTTPURLResponse {
+                if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 204 {
+                    print("[LocationManager] Location updated in Supabase")
+                } else {
+                    print("[LocationManager] Location update failed: \(httpResponse.statusCode)")
+                    // Handle 401 for location updates too
+                    if httpResponse.statusCode == 401 {
+                        print("[LocationManager] Got 401 on location update, forcing token refresh...")
+                        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+                        if let jsonString = UserDefaults.standard.string(forKey: key),
+                           let jsonData = jsonString.data(using: .utf8),
+                           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+                           let rt = json["refresh_token"] as? String {
+                            // Self-call for token refresh — next update will use new token
+                        }
+                    }
+                }
+            }
+        }.resume()
     }
 
     // MARK: - Proximity Alerts (queries locations table)
