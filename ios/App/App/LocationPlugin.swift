@@ -4,7 +4,9 @@ import CoreLocation
 
 @objc(LocationServicePlugin)
 public class LocationServicePlugin: CAPPlugin {
-    private var locationManager: LocationManager?
+    // Use a static reference so the LocationManager survives plugin recreation
+    // and remains active even when the webview/JS context is suspended.
+    private static var sharedLocationManager: LocationManager?
 
     @objc func startLocationUpdates(_ call: CAPPluginCall) {
         guard let userId = call.getString("userId"),
@@ -13,29 +15,28 @@ public class LocationServicePlugin: CAPPlugin {
             return
         }
 
-        if locationManager == nil {
-            locationManager = LocationManager()
+        if LocationServicePlugin.sharedLocationManager == nil {
+            LocationServicePlugin.sharedLocationManager = LocationManager()
         }
 
-        locationManager?.startLocationUpdates(userId: userId, authToken: authToken)
+        LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: authToken)
         call.resolve()
     }
 
     @objc func stopLocationUpdates(_ call: CAPPluginCall) {
-        locationManager?.stopLocationUpdates()
+        LocationServicePlugin.sharedLocationManager?.stopLocationUpdates()
+        LocationServicePlugin.sharedLocationManager = nil
         call.resolve()
     }
 
     @objc func isServiceRunning(_ call: CAPPluginCall) {
-        let running = locationManager != nil
+        let running = LocationServicePlugin.sharedLocationManager != nil
         call.resolve([
             "running": running
         ])
     }
 
     @objc func getLastKnownLocation(_ call: CAPPluginCall) {
-        // iOS does not persist last known location to SharedPreferences like Android.
-        // Return a placeholder indicating location is available via ongoing updates.
         call.reject("Location updates are managed by CLLocationManager. Use startLocationUpdates to receive locations.")
     }
 
@@ -44,17 +45,17 @@ public class LocationServicePlugin: CAPPlugin {
             call.reject("Missing enabled parameter")
             return
         }
-        locationManager?.setTrackingEnabled(enabled)
+        LocationServicePlugin.sharedLocationManager?.setTrackingEnabled(enabled)
         call.resolve()
     }
 
     @objc func setForegroundAccuracy(_ call: CAPPluginCall) {
-        locationManager?.setForegroundAccuracy()
+        LocationServicePlugin.sharedLocationManager?.setForegroundAccuracy()
         call.resolve()
     }
 
     @objc func setBackgroundAccuracy(_ call: CAPPluginCall) {
-        locationManager?.setBackgroundAccuracy()
+        LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
         call.resolve()
     }
 }

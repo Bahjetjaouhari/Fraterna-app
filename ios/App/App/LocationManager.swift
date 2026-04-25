@@ -34,6 +34,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         self.userId = userId
         self.authToken = authToken
 
+        // Begin a persistent background task to protect network calls
+        // while location tracking is active. This task lives as long as
+        // location tracking is active and is only ended in stopLocationUpdates().
+        beginBackgroundTask()
+
         // Set up notification delegate for foreground notifications
         UNUserNotificationCenter.current().delegate = self
 
@@ -104,10 +109,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     // MARK: - Background Task Management
+    // We maintain a persistent background task while location tracking is active.
+    // This ensures iOS doesn't suspend the app mid-network-call. The task is only
+    // ended when location tracking stops (stopLocationUpdates).
 
     private func beginBackgroundTask() -> UIBackgroundTaskIdentifier {
         if bgTask != .invalid { return bgTask }
-        bgTask = UIApplication.shared.beginBackgroundTask(withName: "FraternaHeartbeat") { [weak self] in
+        bgTask = UIApplication.shared.beginBackgroundTask(withName: "FraternaLocationTracking") { [weak self] in
+            // Expiration handler — iOS is about to suspend us. End the task cleanly.
             self?.endBackgroundTask()
         }
         return bgTask
@@ -137,25 +146,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Location updates are flowing, stop fallback heartbeat timer
         stopHeartbeatTimer()
 
-        // Start a background task to ensure iOS gives us time for network calls
-        beginBackgroundTask()
-
         // Refresh token asynchronously, then send heartbeat + location update
         refreshTokenAsync { [weak self] in
             guard let self = self else { return }
-            guard let currentToken = self.authToken else {
-                self.endBackgroundTask()
-                return
-            }
+            guard let currentToken = self.authToken else { return }
 
             self.sendHeartbeat(userId: userId, authToken: currentToken)
             self.updateLocation(userId: userId, authToken: currentToken, location: location)
             self.checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
-
-            // End background task after a short delay to let network calls complete
-            DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                self?.endBackgroundTask()
-            }
         }
     }
 
@@ -181,7 +179,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard userId != nil else { return }
 
         // Send an immediate heartbeat
-        beginBackgroundTask()
         refreshTokenAsync { [weak self] in
             guard let self = self else { return }
             if let userId = self.userId, let token = self.authToken {
@@ -197,17 +194,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         timer.schedule(deadline: .now() + heartbeatInterval, repeating: heartbeatInterval, leeway: .seconds(5))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
-            self.beginBackgroundTask()
             self.refreshTokenAsync { [weak self] in
                 guard let self = self, let userId = self.userId, let token = self.authToken else {
-                    self?.endBackgroundTask()
                     return
                 }
                 self.sendHeartbeat(userId: userId, authToken: token)
-                // End background task after a delay
-                DispatchQueue.main.asyncAfter(deadline: .now() + 5) { [weak self] in
-                    self?.endBackgroundTask()
-                }
             }
         }
         timer.resume()
@@ -370,18 +361,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     private func loadProfileSettings() {
         guard let userId = userId else { return }
-        beginBackgroundTask()
         refreshTokenAsync { [weak self] in
-            guard let self = self, let token = self.authToken else {
-                self?.endBackgroundTask()
-                return
-            }
+            guard let self = self, let token = self.authToken else { return }
 
             let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled"
-            guard let url = URL(string: urlString) else {
-                self.endBackgroundTask()
-                return
-            }
+            guard let url = URL(string: urlString) else { return }
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             request.setValue(self.supabaseAnonKey, forHTTPHeaderField: "apikey")
@@ -400,7 +384,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 } catch {
                     print("[LocationManager] Error loading profile settings: \(error)")
                 }
-                self.endBackgroundTask()
             }.resume()
         }
     }
@@ -446,12 +429,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     private func clearHeartbeat() {
-        beginBackgroundTask()
         refreshTokenAsync { [weak self] in
-            guard let self = self, let userId = self.userId, let token = self.authToken else {
-                self?.endBackgroundTask()
-                return
-            }
+            guard let self = self, let userId = self.userId, let token = self.authToken else { return }
             let url = URL(string: "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
             var request = URLRequest(url: url)
             request.httpMethod = "PATCH"
@@ -463,7 +442,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             let body: [String: Any] = ["last_heartbeat_at": NSNull()]
             request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-            URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
+            URLSession.shared.dataTask(with: request) { _, response, error in
                 if let httpResponse = response as? HTTPURLResponse {
                     if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                         print("[LocationManager] Heartbeat cleared successfully")
@@ -471,7 +450,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                         print("[LocationManager] Clear heartbeat failed: \(httpResponse.statusCode)")
                     }
                 }
-                self?.endBackgroundTask()
             }.resume()
         }
     }
