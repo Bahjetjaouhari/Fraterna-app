@@ -96,10 +96,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func setBackgroundAccuracy() {
-        // Use NearestTenMeters instead of HundredMeters to get more frequent updates
-        // while still saving battery compared to Best accuracy.
-        // HundredMeters causes iOS to deliver very few updates for stationary users.
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        // Keep Best accuracy in background to ensure iOS delivers updates frequently
+        // enough to maintain online status (3-minute threshold).
+        // Lower accuracies (NearestTenMeters, HundredMeters) cause iOS to deliver
+        // updates only every 5-30 minutes for stationary users, making them appear offline.
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
         // DO NOT set distanceFilter to a large value — that kills updates when user is stationary.
         // Use kCLDistanceFilterNone so we still get periodic updates from cell/WiFi drift.
         locationManager.distanceFilter = kCLDistanceFilterNone
