@@ -26,36 +26,46 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         return true
     }
 
-    /// Read stored auth credentials from UserDefaults and start the native
-    /// LocationManager so heartbeats flow even if the JS webview never loads.
     private func restoreLocationManagerFromStorage() {
         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
-        guard let jsonString = UserDefaults.standard.string(forKey: key),
-              let jsonData = jsonString.data(using: .utf8),
-              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-              let accessToken = json["access_token"] as? String,
-              !accessToken.isEmpty else {
-            print("[AppDelegate] No stored auth token found, cannot start LocationManager")
+
+        guard let jsonString = UserDefaults.standard.string(forKey: key) else {
+            print("[AppDelegate] No stored auth token found")
+            return
+        }
+
+        guard let jsonData = jsonString.data(using: .utf8) else {
+            print("[AppDelegate] Could not convert token to data")
+            return
+        }
+
+        guard let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
+            print("[AppDelegate] Could not parse token JSON")
+            return
+        }
+
+        guard let accessToken = json["access_token"] as? String, !accessToken.isEmpty else {
+            print("[AppDelegate] No access_token in stored session")
             return
         }
 
         // Extract user ID from JWT payload
         let parts = accessToken.split(separator: ".")
-        var userId: String?
-        if parts.count == 3 {
-            var base64 = String(parts[1])
-            let remainder = base64.count % 4
-            if remainder > 0 {
-                base64 += String(repeating: "=", count: 4 - remainder)
-            }
-            if let payloadData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-               let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] {
-                userId = payload["sub"] as? String
-            }
+        guard parts.count == 3 else {
+            print("[AppDelegate] Invalid JWT format")
+            return
         }
 
-        guard let userId = userId else {
-            print("[AppDelegate] Could not extract userId from token, cannot start LocationManager")
+        var base64 = String(parts[1])
+        let remainder = base64.count % 4
+        if remainder > 0 {
+            base64 += String(repeating: "=", count: 4 - remainder)
+        }
+
+        guard let payloadData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
+              let userId = payload["sub"] as? String else {
+            print("[AppDelegate] Could not extract userId from JWT")
             return
         }
 
