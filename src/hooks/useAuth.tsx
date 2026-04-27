@@ -234,7 +234,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   }, [profile?.tracking_enabled, profile?.stealth_mode]);
 
   useEffect(() => {
+    // Safety timeout: if getSession never resolves (network issue),
+    // force loading to false after 8 seconds so the app isn't stuck forever
+    const loadingTimeout = setTimeout(() => {
+      setIsLoading(false);
+      console.warn('[Auth] getSession timed out after 8s, forcing isLoading=false');
+    }, 8000);
+
     supabase.auth.getSession().then(({ data: { session } }) => {
+      clearTimeout(loadingTimeout);
       setSession(session);
       setUser(session?.user ?? null);
       if (session?.user) {
@@ -242,6 +250,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         // Start heartbeat when session is restored
         startHeartbeat(session.user.id);
       }
+      setIsLoading(false);
+    }).catch((error) => {
+      clearTimeout(loadingTimeout);
+      console.error('[Auth] getSession failed:', error);
       setIsLoading(false);
     });
 

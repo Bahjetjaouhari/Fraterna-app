@@ -19,6 +19,10 @@ const Index: React.FC = () => {
     // Mark as redirected to prevent double navigation
     hasRedirected.current = true;
 
+    // Safety: if we've been here too long with isLoading=true,
+    // the auth timeout will force isLoading=false and we'll redirect
+    // to onboarding (no user) or the appropriate page (user exists)
+
     // Redirect immediately based on auth status (no splash delay for returning users)
     if (user) {
       // User is logged in - redirect to appropriate page
