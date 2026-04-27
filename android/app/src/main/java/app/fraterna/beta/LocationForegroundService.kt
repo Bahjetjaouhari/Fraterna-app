@@ -156,7 +156,12 @@ class LocationForegroundService : Service() {
 
     private fun startLocationUpdates() {
         isRunning = true
-        startForeground(NOTIFICATION_ID, createNotification())
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            // Android 14+ requires specifying foregroundServiceType
+            startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
 
         // Acquire partial WakeLock to prevent CPU from sleeping in Doze mode
         acquireWakeLock()

@@ -6,7 +6,8 @@ import CoreLocation
 public class LocationServicePlugin: CAPPlugin {
     // Use a static reference so the LocationManager survives plugin recreation
     // and remains active even when the webview/JS context is suspended.
-    private static var sharedLocationManager: LocationManager?
+    // Accessible from AppDelegate for cold-start restoration.
+    static var sharedLocationManager: LocationManager?
 
     @objc func startLocationUpdates(_ call: CAPPluginCall) {
         guard let userId = call.getString("userId"),

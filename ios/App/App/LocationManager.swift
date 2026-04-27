@@ -144,8 +144,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
               let userId = userId,
               trackingEnabled else { return }
 
-        // Location updates are flowing, stop fallback heartbeat timer
-        stopHeartbeatTimer()
+        // Do NOT stop the heartbeat timer here. With pausesLocationUpdatesAutomatically = false,
+        // the locationManagerDidPauseLocationUpdates callback never fires, so the timer would
+        // never restart. Keeping it running ensures heartbeats continue when location updates
+        // become infrequent (stationary user in background).
 
         // Refresh token asynchronously, then send heartbeat + location update
         refreshTokenAsync { [weak self] in
@@ -170,7 +172,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
         print("[LocationManager] Location updates resumed")
-        stopHeartbeatTimer()
+        // Don't stop heartbeat timer — it's our reliable fallback in background.
+        // It will only be stopped when entering foreground (setForegroundAccuracy).
     }
 
     // MARK: - Heartbeat Timer (fallback when stationary)

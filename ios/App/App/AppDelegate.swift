@@ -14,12 +14,58 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         Messaging.messaging().delegate = self
 
         // If iOS launched the app in the background for location updates,
-        // the LocationManager must be started BEFORE the webview loads.
+        // start the native LocationManager immediately — don't wait for JS.
+        // This ensures heartbeats and location updates continue even during
+        // cold launches where the webview may not fully initialize before
+        // iOS suspends the app again.
         if launchOptions?[.location] != nil {
-            print("[AppDelegate] App launched for location updates — will restore LocationManager when JS initializes")
+            print("[AppDelegate] App launched for location updates — starting LocationManager immediately")
+            restoreLocationManagerFromStorage()
         }
 
         return true
+    }
+
+    /// Read stored auth credentials from UserDefaults and start the native
+    /// LocationManager so heartbeats flow even if the JS webview never loads.
+    private func restoreLocationManagerFromStorage() {
+        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+        guard let jsonString = UserDefaults.standard.string(forKey: key),
+              let jsonData = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let accessToken = json["access_token"] as? String,
+              !accessToken.isEmpty else {
+            print("[AppDelegate] No stored auth token found, cannot start LocationManager")
+            return
+        }
+
+        // Extract user ID from JWT payload
+        let parts = accessToken.split(separator: ".")
+        var userId: String?
+        if parts.count == 3 {
+            var base64 = String(parts[1])
+            let remainder = base64.count % 4
+            if remainder > 0 {
+                base64 += String(repeating: "=", count: 4 - remainder)
+            }
+            if let payloadData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
+               let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any] {
+                userId = payload["sub"] as? String
+            }
+        }
+
+        guard let userId = userId else {
+            print("[AppDelegate] Could not extract userId from token, cannot start LocationManager")
+            return
+        }
+
+        // Use the shared LocationManager so it persists if JS also starts it later
+        if LocationServicePlugin.sharedLocationManager == nil {
+            LocationServicePlugin.sharedLocationManager = LocationManager()
+        }
+        LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: accessToken)
+        LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
+        print("[AppDelegate] LocationManager started with userId=\(userId)")
     }
 
     // Pass APNS token to Firebase, then forward the FCM token to Capacitor
