@@ -18,6 +18,8 @@
 		FRAT0001200000001 /* GoogleService-Info.plist in Resources */ = {isa = PBXBuildFile; fileRef = FRAT0002200000001 /* GoogleService-Info.plist */; };
 		FRAT0001200000010 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = FRAT0002200000010 /* FirebaseCore */; };
 		FRAT0001200000011 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = FRAT0002200000011 /* FirebaseMessaging */; };
+		FRAT0001LOC0000001 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FRAT0002LOC0000001 /* LocationManager.swift */; };
+		FRAT0001LOC0000002 /* LocationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = FRAT0002LOC0000002 /* LocationPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -32,6 +34,8 @@
 		50B271D01FEDC1A000F3C39B /* public */ = {isa = PBXFileReference; lastKnownFileType = folder; path = public; sourceTree = "<group>"; };
 		FRAT0002200000001 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = GoogleService-Info.plist; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
+		FRAT0002LOC0000001 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
+		FRAT0002LOC0000002 /* LocationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -70,6 +74,8 @@
 			children = (
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
+				FRAT0002LOC0000001 /* LocationManager.swift */,
+				FRAT0002LOC0000002 /* LocationPlugin.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -167,6 +173,8 @@
 			buildActionMask = 2147483647;
 			files = (
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
+				FRAT0001LOC0000001 /* LocationManager.swift in Sources */,
+				FRAT0001LOC0000002 /* LocationPlugin.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
