@@ -145,14 +145,37 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
               let userId = userId,
               trackingEnabled else { return }
 
+        // Protect network calls with a UIBackgroundTask so iOS doesn't
+        // suspend the app before they complete. The task is ended when
+        // all network calls finish.
+        let bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FraternaLocationUpdate") { [weak self] in
+            // Expiration handler — iOS is about to suspend us. End cleanly.
+            self?.endBackgroundTask(bgTaskId)
+        }
+
         // Refresh token asynchronously, then send heartbeat + location update
         refreshTokenAsync { [weak self] in
-            guard let self = self else { return }
-            guard let currentToken = self.authToken else { return }
+            guard let self = self else {
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+                return
+            }
+            guard let currentToken = self.authToken else {
+                self.endBackgroundTask(bgTaskId)
+                return
+            }
 
             self.sendHeartbeat(userId: userId, authToken: currentToken)
             self.updateLocation(userId: userId, authToken: currentToken, location: location)
             self.checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
+
+            // End background task after all network calls are dispatched
+            self.endBackgroundTask(bgTaskId)
+        }
+    }
+
+    private func endBackgroundTask(_ taskId: UIBackgroundTaskIdentifier) {
+        if taskId != .invalid {
+            UIApplication.shared.endBackgroundTask(taskId)
         }
     }
 
@@ -411,29 +434,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     private func clearHeartbeat() {
-        refreshTokenAsync { [weak self] in
-            guard let self = self, let userId = self.userId, let token = self.authToken else { return }
-            let url = URL(string: "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
-            var request = URLRequest(url: url)
-            request.httpMethod = "PATCH"
-            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            request.setValue(self.supabaseAnonKey, forHTTPHeaderField: "apikey")
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
-
-            let body: [String: Any] = ["last_heartbeat_at": NSNull()]
-            request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-            URLSession.shared.dataTask(with: request) { _, response, error in
-                if let httpResponse = response as? HTTPURLResponse {
-                    if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
-                        print("[LocationManager] Heartbeat cleared successfully")
-                    } else {
-                        print("[LocationManager] Clear heartbeat failed: \(httpResponse.statusCode)")
-                    }
-                }
-            }.resume()
-        }
+        // Don't set last_heartbeat_at to null on the server — that immediately
+        // marks the user as offline. Just stop sending heartbeats and let the
+        // server's 3-minute threshold expire naturally.
+        print("[LocationManager] Heartbeat stopped — will expire naturally on server")
     }
 
     // MARK: - Location Update

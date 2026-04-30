@@ -75,6 +75,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setSession(null);
     setProfile(null);
     setRoles([]);
+    // Stop native location service on force logout
+    if (Capacitor.isNativePlatform()) {
+      try {
+        Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+      } catch (e) {
+        console.error('Failed to stop location service on force logout:', e);
+      }
+    }
   };
 
   // Get or generate a persistent local device ID for this browser/device
@@ -270,6 +278,15 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setProfile(null);
           setRoles([]);
           stopHeartbeat();
+          // Stop native location service when session is null
+          // (logout, token expiry, session invalidation)
+          if (Capacitor.isNativePlatform()) {
+            try {
+              Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+            } catch (e) {
+              console.error('Failed to stop location service on session null:', e);
+            }
+          }
         }
 
         setIsLoading(false);
@@ -277,30 +294,16 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     );
 
     // Handle native app state changes (pause/resume)
+    // NOTE: Accuracy transitions (foreground/background) are handled entirely
+    // by native NotificationCenter observers in LocationManager.swift.
+    // The JS bridge does NOT call setForegroundAccuracy/setBackgroundAccuracy
+    // here to avoid race conditions with the native observers.
     const setupAppStateListener = async () => {
       const appStateListener = await App.addListener('appStateChange', (state: { isActive: boolean }) => {
         if (state.isActive && user?.id) {
           // App came to foreground - send heartbeat and refresh data
           sendHeartbeat(user.id);
           window.dispatchEvent(new CustomEvent('app-resume'));
-
-          // Switch iOS location accuracy back to high
-          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
-            try {
-              Capacitor.nativeCallback('LocationService', 'setForegroundAccuracy', {});
-            } catch (e) {
-              console.error('Failed to set foreground accuracy:', e);
-            }
-          }
-        } else if (!state.isActive) {
-          // App went to background - switch iOS location accuracy to low (battery saving)
-          if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
-            try {
-              Capacitor.nativeCallback('LocationService', 'setBackgroundAccuracy', {});
-            } catch (e) {
-              console.error('Failed to set background accuracy:', e);
-            }
-          }
         }
       });
       return appStateListener;

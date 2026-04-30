@@ -4,36 +4,21 @@ import { useLocationService } from '@/hooks/useLocationService';
 import { useAuth } from '@/hooks/useAuth';
 
 /**
- * LocationServiceWrapper - Ensures the native location service is running
- * when the user is logged in and tracking is enabled.
+ * LocationServiceWrapper - Checks native location service status.
  *
- * Note: The primary location service start happens in useAuth.tsx which
- * calls startLocationUpdates directly. This wrapper provides a secondary
- * check for service status and handles tracking toggle changes.
+ * The primary location lifecycle (start/stop/tracking) is managed entirely
+ * by useAuth.tsx to avoid duplicate calls and race conditions.
+ * This wrapper only monitors service status for UI indicators.
  */
 export const LocationServiceWrapper = () => {
-  const { user, profile, session } = useAuth();
-  const { isRunning, checkStatus } = useLocationService();
+  const { user } = useAuth();
+  const { checkStatus } = useLocationService();
 
-  // Check service status on mount and when user/profile changes
+  // Check service status on mount and when user changes
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     checkStatus();
-  }, [user, profile?.tracking_enabled, checkStatus]);
-
-  // Handle tracking toggle — inform native side when tracking is disabled
-  useEffect(() => {
-    if (!Capacitor.isNativePlatform() || !user) return;
-
-    const shouldTrack = profile?.tracking_enabled !== false && profile?.stealth_mode !== true;
-
-    if (!shouldTrack && isRunning) {
-      // Signal native side to stop sending location updates
-      Capacitor.nativeCallback('LocationService', 'setTrackingEnabled', { enabled: false });
-    } else if (shouldTrack && isRunning) {
-      Capacitor.nativeCallback('LocationService', 'setTrackingEnabled', { enabled: true });
-    }
-  }, [user, profile?.tracking_enabled, profile?.stealth_mode, isRunning]);
+  }, [user, checkStatus]);
 
   // This component doesn't render anything
   return null;
