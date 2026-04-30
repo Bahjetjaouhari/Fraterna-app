@@ -22,8 +22,8 @@ class MainActivity : BridgeActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // Clear all notifications and badge when app is opened
-        clearAllNotifications()
+        // Clear only proximity and message notifications (not the foreground service notification)
+        clearNonServiceNotifications()
 
         // Explicitly initialize Firebase and log status
         try {
@@ -51,19 +51,22 @@ class MainActivity : BridgeActivity() {
 
     override fun onResume() {
         super.onResume()
-        // Clear notifications and badge when app comes to foreground
-        clearAllNotifications()
+        clearNonServiceNotifications()
     }
 
-    private fun clearAllNotifications() {
+    /**
+     * Clear all notifications EXCEPT the foreground service notification (ID 1001).
+     * Cancelling the foreground service notification can kill the service on Android 13+.
+     */
+    private fun clearNonServiceNotifications() {
         try {
             val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            // Cancel all notifications EXCEPT the foreground service notification (ID 1001).
-            // Cancelling the foreground service notification can stop the service on Android 13+.
-            notificationManager.cancelAll()
-            // Re-post the foreground service notification since cancelAll removed it
-            // (the service itself will re-post it on its next update)
-            Log.d(TAG, "Notifications cleared (except foreground service)")
+            // Cancel proximity notifications and message notifications by their specific channels
+            // rather than using cancelAll() which kills the foreground service notification
+            notificationManager.deleteNotificationChannel(LocationForegroundService.CHANNEL_ID_PROXIMITY)
+            // Recreate it immediately so future alerts work
+            NotificationHelper.createNotificationChannels(this)
+            Log.d(TAG, "Non-service notifications cleared")
         } catch (e: Exception) {
             Log.e(TAG, "Error clearing notifications: ${e.message}")
         }

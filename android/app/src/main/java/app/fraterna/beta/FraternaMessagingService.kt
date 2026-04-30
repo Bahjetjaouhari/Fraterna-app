@@ -36,14 +36,13 @@ class FraternaMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "Token: $token")
         lastToken = token
 
-        // Broadcast token to the app if it's running
+        // Broadcast token to the app via LocalBroadcastManager (in-app only, no system broadcast)
         try {
             val intent = Intent("app.fraterna.beta.FCM_TOKEN").apply {
                 putExtra("token", token)
-                setPackage(packageName)
             }
-            sendBroadcast(intent)
-            Log.d(TAG, "Token broadcast sent to app")
+            androidx.localbroadcastmanager.content.LocalBroadcastManager.getInstance(this).sendBroadcast(intent)
+            Log.d(TAG, "Token broadcast sent to app via LocalBroadcastManager")
         } catch (e: Exception) {
             Log.e(TAG, "Error broadcasting token: ${e.message}")
         }

@@ -26,6 +26,9 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.*
 
 class LocationForegroundService : Service() {
@@ -37,9 +40,17 @@ class LocationForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "app.fraterna.beta.action.START_LOCATION"
         const val ACTION_STOP = "app.fraterna.beta.action.STOP_LOCATION"
+        const val ONLINE_THRESHOLD_SECONDS = 180L // Must match is_user_active() SQL function
 
         @Volatile
         private var isRunning = false
+
+        // JS bridge can update these from the webview
+        @Volatile
+        var trackingEnabledFromJS: Boolean = true
+
+        @Volatile
+        var backgroundMode: Boolean = false
 
         fun isServiceRunning(): Boolean = isRunning
 
@@ -60,12 +71,27 @@ class LocationForegroundService : Service() {
             }
             context.startService(intent)
         }
+
+        fun setTrackingEnabled(enabled: Boolean) {
+            trackingEnabledFromJS = enabled
+        }
+
+        fun setBackgroundMode(bg: Boolean) {
+            backgroundMode = bg
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private var locationCallback: LocationCallback? = null
-    private val httpClient = OkHttpClient()
+
+    // OkHttpClient with proper timeouts to prevent hangs on poor connectivity
+    private val httpClient = OkHttpClient.Builder()
+        .connectTimeout(15, TimeUnit.SECONDS)
+        .readTimeout(15, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .build()
+
     private var wakeLock: PowerManager.WakeLock? = null
 
     // User session data (accessed from multiple threads)
@@ -73,15 +99,39 @@ class LocationForegroundService : Service() {
     private var currentUserId: String? = null
     @Volatile
     private var bearerToken: String? = null
+    @Volatile
     private var profileSettings: ProfileSettings? = null
 
-    // Proximity alert tracking
-    private val proximityCooldowns = mutableMapOf<String, Long>()
+    // Privacy flags — checked before uploading location
+    @Volatile
+    private var stealthMode: Boolean = false
+    @Volatile
+    private var trackingEnabledFromProfile: Boolean = true
+
+    // Proximity alert tracking (thread-safe)
+    private val proximityCooldowns = ConcurrentHashMap<String, Long>()
     private val PROXIMITY_COOLDOWN_MS = 2 * 60 * 1000L // 2 minutes
 
-    // Supabase config
+    // Profile settings cache TTL (avoid fetching every 15s)
+    @Volatile
+    private var profileSettingsLastFetchMs: Long = 0
+    private val PROFILE_SETTINGS_TTL_MS = 5 * 60 * 1000L // 5 minutes
+
+    // Session load retry limit
+    private var sessionLoadRetries = 0
+    private val MAX_SESSION_LOAD_RETRIES = 12 // 12 x 10s = 2 minutes max
+
+    // Token refresh throttle (avoid 3x refresh per tick)
+    @Volatile
+    private var lastTokenRefreshMs: Long = 0
+    private val TOKEN_REFRESH_THROTTLE_MS = 30_000L // 30 seconds
+
+    // Notification ID counter (thread-safe)
+    private val notificationIdCounter = AtomicInteger(2000)
+
+    // Supabase config from BuildConfig (injected at build time from local.properties)
     private val supabaseUrl = "https://vzlbvknauwvrqwpvtaqe.supabase.co"
-    private val supabaseAnonKey = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bGJ2a25hdXd2cnF3cHZ0YXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4NzUwODUsImV4cCI6MjA4NDQ1MTA4NX0.XlPQBEKzv-RxOnTD1pbS-5A_J5xavLqwpWH9IAC5kOw"
+    private val supabaseAnonKey = BuildConfig.SUPABASE_ANON_KEY
 
     data class ProfileSettings(
         val proximityRadiusKm: Double = 5.0,
@@ -95,8 +145,6 @@ class LocationForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // When Android restarts the service after killing it, intent is null.
-        // Default to ACTION_START so the service resumes tracking.
         val action = intent?.action ?: ACTION_START
         when (action) {
             ACTION_START -> startLocationUpdates()
@@ -109,7 +157,6 @@ class LocationForegroundService : Service() {
 
     private fun createNotificationChannels() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            // Location channel (low priority, ongoing)
             val locationChannel = NotificationChannel(
                 CHANNEL_ID,
                 CHANNEL_NAME,
@@ -119,7 +166,6 @@ class LocationForegroundService : Service() {
                 setShowBadge(false)
             }
 
-            // Proximity alert channel (high priority)
             val proximityChannel = NotificationChannel(
                 CHANNEL_ID_PROXIMITY,
                 "Alertas de proximidad",
@@ -157,34 +203,38 @@ class LocationForegroundService : Service() {
     private fun startLocationUpdates() {
         isRunning = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            // Android 14+ requires specifying foregroundServiceType
             startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
         } else {
             startForeground(NOTIFICATION_ID, createNotification())
         }
 
-        // Acquire partial WakeLock to prevent CPU from sleeping in Doze mode
         acquireWakeLock()
-
-        // Load user session
         loadUserSession()
 
+        // Adjust location request based on background mode
+        val priority = if (backgroundMode) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
+        val intervalMs = if (backgroundMode) 30000L else 15000L
+
         val locationRequest = LocationRequest.Builder(
-            Priority.PRIORITY_HIGH_ACCURACY,
-            15000L // Update interval: 15 seconds
+            priority,
+            intervalMs
         ).apply {
-            setMinUpdateIntervalMillis(10000L) // Fastest interval: 10 seconds
-            setWaitForAccurateLocation(true)
-            setMaxUpdateDelayMillis(30000L) // Max delay: 30 seconds
+            setMinUpdateIntervalMillis(if (backgroundMode) 20000L else 10000L)
+            setWaitForAccurateLocation(!backgroundMode)
+            setMaxUpdateDelayMillis(if (backgroundMode) 60000L else 30000L)
         }.build()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { location ->
                     sendLocationToWebView(location)
-                    sendHeartbeat()
-                    updateLocationInSupabase(location)
-                    checkProximityAlerts(location)
+                    // Single coroutine per tick — refreshToken once, then call all methods
+                    serviceScope.launch {
+                        refreshToken()
+                        sendHeartbeat()
+                        updateLocationInSupabase(location)
+                        checkProximityAlerts(location)
+                    }
                 }
             }
         }
@@ -207,7 +257,8 @@ class LocationForegroundService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "fraterna:LocationServiceWakeLock"
         ).apply {
-            acquire()
+            // 10-minute timeout — re-acquired on each location update via startLocationUpdates
+            acquire(10 * 60 * 1000L)
         }
     }
 
@@ -222,6 +273,9 @@ class LocationForegroundService : Service() {
 
     private fun stopLocationUpdates() {
         isRunning = false
+        trackingEnabledFromJS = true
+        backgroundMode = false
+        sessionLoadRetries = 0
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
@@ -235,8 +289,13 @@ class LocationForegroundService : Service() {
         val accessToken = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
 
         if (accessToken == null) {
-            android.util.Log.w("LocationService", "No auth token found, scheduling retry in 10s...")
-            // Token may not be written to SharedPreferences yet. Retry after a delay.
+            sessionLoadRetries++
+            if (sessionLoadRetries > MAX_SESSION_LOAD_RETRIES) {
+                android.util.Log.e("LocationService", "Max session load retries exceeded, stopping service")
+                stopLocationUpdates()
+                return
+            }
+            android.util.Log.w("LocationService", "No auth token found, retry $sessionLoadRetries/$MAX_SESSION_LOAD_RETRIES in 10s...")
             serviceScope.launch {
                 kotlinx.coroutines.delay(10000)
                 loadUserSession()
@@ -251,7 +310,6 @@ class LocationForegroundService : Service() {
             bearerToken = tokenJson.optString("access_token", null)
 
             if (currentUserId == null) {
-                // Try to extract user ID from JWT payload (more reliable than stored user object)
                 bearerToken?.let { token ->
                     val parts = token.split(".")
                     if (parts.size == 3) {
@@ -263,11 +321,17 @@ class LocationForegroundService : Service() {
             }
 
             if (currentUserId != null && bearerToken != null) {
+                sessionLoadRetries = 0
                 android.util.Log.d("LocationService", "Session loaded: userId=$currentUserId")
-                // Load profile settings
                 loadProfileSettings()
             } else {
-                android.util.Log.w("LocationService", "Incomplete session data, scheduling retry...")
+                sessionLoadRetries++
+                if (sessionLoadRetries > MAX_SESSION_LOAD_RETRIES) {
+                    android.util.Log.e("LocationService", "Max session load retries exceeded, stopping service")
+                    stopLocationUpdates()
+                    return
+                }
+                android.util.Log.w("LocationService", "Incomplete session data, retry $sessionLoadRetries/$MAX_SESSION_LOAD_RETRIES...")
                 serviceScope.launch {
                     kotlinx.coroutines.delay(10000)
                     loadUserSession()
@@ -279,25 +343,26 @@ class LocationForegroundService : Service() {
     }
 
     /**
-     * REAL token refresh: checks if the current JWT is about to expire,
-     * and if so, calls the Supabase auth endpoint to get a new one.
-     * Falls back to re-reading from SharedPreferences if the refresh call fails.
+     * Token refresh with 30s throttle to avoid redundant calls.
      */
     private fun refreshToken() {
+        val now = System.currentTimeMillis()
+        if (now - lastTokenRefreshMs < TOKEN_REFRESH_THROTTLE_MS) return
+        lastTokenRefreshMs = now
+
         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
         val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
 
         try {
             val tokenJson = JSONObject(storedJson)
 
-            // First: check if JS client already refreshed the token in storage
+            // Check if JS client already refreshed the token in storage
             val storedAccessToken = tokenJson.optString("access_token", null)
             if (storedAccessToken != null && storedAccessToken != bearerToken) {
                 bearerToken = storedAccessToken
                 android.util.Log.d("LocationService", "Token updated from storage (JS client refreshed)")
             }
 
-            // Check if current token is expired or about to expire (within 5 minutes)
             if (bearerToken != null && isTokenExpiringSoon(bearerToken!!, 300)) {
                 android.util.Log.d("LocationService", "Token expiring soon, refreshing via Supabase...")
                 val refreshToken = tokenJson.optString("refresh_token", null)
@@ -312,13 +377,10 @@ class LocationForegroundService : Service() {
         }
     }
 
-    /**
-     * Decodes the JWT payload and checks if it expires within `thresholdSeconds`.
-     */
     private fun isTokenExpiringSoon(token: String, thresholdSeconds: Long): Boolean {
         try {
             val parts = token.split(".")
-            if (parts.size != 3) return true // malformed JWT, assume expired
+            if (parts.size != 3) return true
 
             val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
             val payloadJson = JSONObject(payload)
@@ -329,20 +391,13 @@ class LocationForegroundService : Service() {
             return (exp - nowSeconds) < thresholdSeconds
         } catch (e: Exception) {
             android.util.Log.e("LocationService", "Error decoding JWT: ${e.message}")
-            return true // assume expired on error
+            return true
         }
     }
 
-    /**
-     * Calls the Supabase auth endpoint to refresh the token using the refresh_token.
-     * Updates SharedPreferences and in-memory bearerToken + currentUserId.
-     */
     private fun performTokenRefresh(refreshToken: String, prefs: android.content.SharedPreferences) {
         try {
-            val body = JSONObject().apply {
-                put("refresh_token", refreshToken)
-            }
-
+            val body = JSONObject().apply { put("refresh_token", refreshToken) }
             val requestBody = body.toString().toRequestBody("application/json".toMediaType())
 
             val request = Request.Builder()
@@ -358,27 +413,21 @@ class LocationForegroundService : Service() {
             if (response.isSuccessful && responseBody != null) {
                 val newSession = JSONObject(responseBody)
                 val newAccessToken = newSession.optString("access_token", null)
-                val newRefreshToken = newSession.optString("refresh_token", null)
 
                 if (newAccessToken != null) {
                     bearerToken = newAccessToken
                     android.util.Log.d("LocationService", "Token refreshed successfully via Supabase")
 
-                    // Update user ID in case it changed
                     val userObj = newSession.optJSONObject("user")
                     if (userObj != null) {
                         currentUserId = userObj.optString("id", currentUserId)
                     }
 
-                    // Rebuild the stored session JSON and save back to SharedPreferences
-                    // so the JS client also picks up the new tokens
                     val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
                     if (storedJson != null) {
                         val storedSession = JSONObject(storedJson)
                         storedSession.put("access_token", newAccessToken)
-                        if (newRefreshToken != null) {
-                            storedSession.put("refresh_token", newRefreshToken)
-                        }
+                        storedSession.put("refresh_token", newSession.optString("refresh_token", null))
                         storedSession.put("expires_at", newSession.optLong("expires_at", 0))
                         storedSession.put("expires_in", newSession.optInt("expires_in", 3600))
                         storedSession.put("token_type", "bearer")
@@ -386,14 +435,10 @@ class LocationForegroundService : Service() {
                         prefs.edit()
                             .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", storedSession.toString())
                             .apply()
-
-                        android.util.Log.d("LocationService", "Updated token in SharedPreferences")
                     }
                 }
             } else {
-                android.util.Log.e("LocationService", "Token refresh failed: ${response.code} - $responseBody")
-                // If refresh fails with 400/401, the refresh token itself is invalid
-                // User needs to re-login, but we don't force logout from the service
+                android.util.Log.e("LocationService", "Token refresh failed: ${response.code}")
                 if (response.code == 400 || response.code == 401) {
                     android.util.Log.e("LocationService", "Refresh token is invalid. User needs to re-login.")
                 }
@@ -403,14 +448,23 @@ class LocationForegroundService : Service() {
         }
     }
 
+    /**
+     * Load profile settings including privacy flags.
+     * Uses cache with 5-minute TTL to avoid fetching every 15 seconds.
+     */
     private fun loadProfileSettings() {
         val userId = currentUserId ?: return
         val token = bearerToken ?: return
 
+        // Use cached settings if fresh
+        if (System.currentTimeMillis() - profileSettingsLastFetchMs < PROFILE_SETTINGS_TTL_MS && profileSettings != null) {
+            return
+        }
+
         serviceScope.launch {
             try {
                 val request = Request.Builder()
-                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled")
+                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled")
                     .addHeader("Authorization", "Bearer $token")
                     .addHeader("apikey", supabaseAnonKey)
                     .get()
@@ -420,18 +474,21 @@ class LocationForegroundService : Service() {
                 if (response.isSuccessful) {
                     val responseBody = response.body?.string()
                     if (!responseBody.isNullOrEmpty()) {
-                        // Parse the response - it's an array
                         val jsonArray = org.json.JSONArray(responseBody)
                         if (jsonArray.length() > 0) {
                             val profile = jsonArray.getJSONObject(0)
                             val radius = profile.optDouble("proximity_radius_km", 5.0)
                             val enabled = profile.optBoolean("proximity_alerts_enabled", true)
+                            stealthMode = profile.optBoolean("stealth_mode", false)
+                            trackingEnabledFromProfile = profile.optBoolean("tracking_enabled", true)
 
                             profileSettings = ProfileSettings(
                                 proximityRadiusKm = radius,
                                 proximityAlertsEnabled = enabled
                             )
-                            android.util.Log.d("LocationService", "Profile settings loaded: radius=$radius km, enabled=$enabled")
+                            profileSettingsLastFetchMs = System.currentTimeMillis()
+
+                            android.util.Log.d("LocationService", "Profile loaded: radius=$radius, stealth=$stealthMode, tracking=$trackingEnabledFromProfile")
                         }
                     }
                 }
@@ -441,6 +498,10 @@ class LocationForegroundService : Service() {
         }
     }
 
+    /**
+     * Send location to WebView via SharedPreferences only.
+     * No system-wide broadcast — GPS coordinates are too sensitive to leak.
+     */
     private fun sendLocationToWebView(location: Location) {
         val prefs = getSharedPreferences("fraterna_location", Context.MODE_PRIVATE)
         prefs.edit().apply {
@@ -450,13 +511,8 @@ class LocationForegroundService : Service() {
             putLong("timestamp", System.currentTimeMillis())
             apply()
         }
-
-        val intent = Intent("app.fraterna.beta.LOCATION_UPDATE").apply {
-            putExtra("lat", location.latitude)
-            putExtra("lng", location.longitude)
-            putExtra("accuracy", location.accuracy)
-        }
-        sendBroadcast(intent)
+        // Removed: sendBroadcast with GPS coords was unsecured (any app could listen).
+        // WebView reads from SharedPreferences instead.
     }
 
     private fun sendHeartbeat() {
@@ -464,8 +520,6 @@ class LocationForegroundService : Service() {
 
         serviceScope.launch {
             try {
-                // Refresh token INSIDE the coroutine (on IO dispatcher) — never block main thread
-                refreshToken()
                 val token = bearerToken ?: return@launch
 
                 val jsonBody = JSONObject().apply {
@@ -495,7 +549,10 @@ class LocationForegroundService : Service() {
                         if (storedJson != null) {
                             val tokenJson = JSONObject(storedJson)
                             val rt = tokenJson.optString("refresh_token", null)
-                            if (rt != null) performTokenRefresh(rt, prefs)
+                            if (rt != null) {
+                                lastTokenRefreshMs = 0 // Force refresh past throttle
+                                performTokenRefresh(rt, prefs)
+                            }
                         }
                     }
                 }
@@ -506,19 +563,24 @@ class LocationForegroundService : Service() {
     }
 
     /**
-     * Sends the current location to the Supabase `locations` table via upsert.
-     * This is required so other users can see this user's position on the map.
+     * Sends the current location to Supabase.
+     * CRITICAL: Respects stealth_mode and tracking_enabled — skips upload when either is off.
      */
     private fun updateLocationInSupabase(location: Location) {
         val userId = currentUserId ?: return
 
+        // Check privacy flags from both profile AND JS bridge
+        if (stealthMode || !trackingEnabledFromProfile || !trackingEnabledFromJS) {
+            android.util.Log.d("LocationService", "Skipping location upload: stealth=$stealthMode, trackingProfile=$trackingEnabledFromProfile, trackingJS=$trackingEnabledFromJS")
+            return
+        }
+
         serviceScope.launch {
             try {
-                // Refresh token INSIDE the coroutine (on IO dispatcher)
-                refreshToken()
                 val token = bearerToken ?: return@launch
 
-                val accuracy = location.accuracy.toInt().coerceIn(100, 300)
+                // Report real accuracy with a privacy floor of 100m (no artificial ceiling)
+                val accuracy = max(100, location.accuracy.toInt())
                 val jsonBody = JSONObject().apply {
                     put("user_id", userId)
                     put("lat", location.latitude)
@@ -543,7 +605,6 @@ class LocationForegroundService : Service() {
                     android.util.Log.d("LocationService", "Location updated in Supabase")
                 } else {
                     android.util.Log.e("LocationService", "Location update failed: ${response.code}")
-                    // Handle 401 — force token refresh (same as sendHeartbeat)
                     if (response.code == 401) {
                         android.util.Log.w("LocationService", "Got 401 on location update, forcing token refresh...")
                         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
@@ -551,7 +612,10 @@ class LocationForegroundService : Service() {
                         if (storedJson != null) {
                             val tokenJson = JSONObject(storedJson)
                             val rt = tokenJson.optString("refresh_token", null)
-                            if (rt != null) performTokenRefresh(rt, prefs)
+                            if (rt != null) {
+                                lastTokenRefreshMs = 0
+                                performTokenRefresh(rt, prefs)
+                            }
                         }
                     }
                 }
@@ -561,65 +625,81 @@ class LocationForegroundService : Service() {
         }
     }
 
+    /**
+     * Proximity check with server-side geo filter.
+     * Only fetches locations within the proximity radius instead of ALL users.
+     */
     private fun checkProximityAlerts(location: Location) {
         val settings = profileSettings
         val userId = currentUserId ?: return
         val myLat = location.latitude
         val myLng = location.longitude
 
+        // Check if alerts are disabled
+        if (settings?.proximityAlertsEnabled == false) return
+        val radiusKm = settings?.proximityRadiusKm ?: 5.0
+        if (radiusKm <= 0) return
+
         serviceScope.launch {
             try {
-                // Refresh token INSIDE the coroutine (on IO dispatcher)
-                refreshToken()
                 val token = bearerToken ?: return@launch
 
-                // First, reload profile settings to get latest values
-                val settingsRequest = Request.Builder()
-                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled")
-                    .addHeader("Authorization", "Bearer $token")
-                    .addHeader("apikey", supabaseAnonKey)
-                    .get()
-                    .build()
+                // Refresh profile settings if cache is stale
+                if (System.currentTimeMillis() - profileSettingsLastFetchMs > PROFILE_SETTINGS_TTL_MS) {
+                    try {
+                        val settingsRequest = Request.Builder()
+                            .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled")
+                            .addHeader("Authorization", "Bearer $token")
+                            .addHeader("apikey", supabaseAnonKey)
+                            .get()
+                            .build()
 
-                val settingsResponse = httpClient.newCall(settingsRequest).execute()
-                var alertsEnabled = settings?.proximityAlertsEnabled ?: true
-                var radiusKm = settings?.proximityRadiusKm ?: 5.0
+                        val settingsResponse = httpClient.newCall(settingsRequest).execute()
+                        if (settingsResponse.isSuccessful) {
+                            val settingsBody = settingsResponse.body?.string()
+                            if (!settingsBody.isNullOrEmpty()) {
+                                val settingsArray = org.json.JSONArray(settingsBody)
+                                if (settingsArray.length() > 0) {
+                                    val profileObj = settingsArray.getJSONObject(0)
+                                    val alertsEnabled = profileObj.optBoolean("proximity_alerts_enabled", true)
+                                    val radius = profileObj.optDouble("proximity_radius_km", 5.0)
+                                    stealthMode = profileObj.optBoolean("stealth_mode", false)
+                                    trackingEnabledFromProfile = profileObj.optBoolean("tracking_enabled", true)
 
-                if (settingsResponse.isSuccessful) {
-                    val settingsBody = settingsResponse.body?.string()
-                    if (!settingsBody.isNullOrEmpty()) {
-                        val settingsArray = org.json.JSONArray(settingsBody)
-                        if (settingsArray.length() > 0) {
-                            val profileObj = settingsArray.getJSONObject(0)
-                            alertsEnabled = profileObj.optBoolean("proximity_alerts_enabled", true)
-                            radiusKm = profileObj.optDouble("proximity_radius_km", 5.0)
-
-                            // Update cached settings
-                            profileSettings = ProfileSettings(
-                                proximityRadiusKm = radiusKm,
-                                proximityAlertsEnabled = alertsEnabled
-                            )
-
-                            android.util.Log.d("LocationService", "Settings refreshed: alertsEnabled=$alertsEnabled, radiusKm=$radiusKm")
+                                    profileSettings = ProfileSettings(
+                                        proximityRadiusKm = radius,
+                                        proximityAlertsEnabled = alertsEnabled
+                                    )
+                                    profileSettingsLastFetchMs = System.currentTimeMillis()
+                                }
+                            }
                         }
+                    } catch (e: Exception) {
+                        android.util.Log.e("LocationService", "Error refreshing profile: ${e.message}")
                     }
                 }
 
-                // Check if alerts are disabled
-                if (!alertsEnabled) {
-                    android.util.Log.d("LocationService", "Proximity alerts disabled in settings, skipping")
-                    return@launch
-                }
-                if (radiusKm <= 0) {
-                    android.util.Log.d("LocationService", "Proximity radius is 0, skipping")
-                    return@launch
-                }
+                // Skip if alerts disabled after refresh
+                if (profileSettings?.proximityAlertsEnabled == false) return@launch
 
-                // Fetch nearby users with their locations
+                // Server-side geo filter: only fetch locations within bounding box
+                val latDelta = radiusKm / 111.32 // ~degrees per km latitude
+                val lngDelta = radiusKm / (111.32 * cos(Math.toRadians(myLat)))
+
+                val minLat = myLat - latDelta
+                val maxLat = myLat + latDelta
+                val minLng = myLng - lngDelta
+                val maxLng = myLng + lngDelta
+
+                val nearbyUrl = "$supabaseUrl/rest/v1/locations" +
+                    "?select=lat,lng,user_id,profile:profiles!locations_user_id_fkey(id,full_name,stealth_mode,tracking_enabled,last_heartbeat_at)" +
+                    "&user_id=neq.$userId" +
+                    "&lat=gte.$minLat&lat=lte.$maxLat" +
+                    "&lng=gte.$minLng&lng=lte.$maxLng" +
+                    "&lat=not.is.null&lng=not.is.null"
+
                 val request = Request.Builder()
-                    .url("""
-                        $supabaseUrl/rest/v1/locations?select=*,profile:profiles!locations_user_id_fkey(id,full_name,stealth_mode,tracking_enabled,last_heartbeat_at)&user_id=neq.$userId
-                    """.trimIndent().replace("\n", "").replace(" ", ""))
+                    .url(nearbyUrl)
                     .addHeader("Authorization", "Bearer $token")
                     .addHeader("apikey", supabaseAnonKey)
                     .get()
@@ -638,41 +718,30 @@ class LocationForegroundService : Service() {
 
                             if (lat.isNaN() || lng.isNaN()) continue
 
-                            val profileObj = locationObj.optJSONObject("profile")
-                            if (profileObj == null) continue
+                            val profileObj = locationObj.optJSONObject("profile") ?: continue
 
-                            // Skip if stealth_mode is true (ghost mode)
-                            if (profileObj.optBoolean("stealth_mode", false)) {
-                                android.util.Log.d("LocationService", "Skipping user in ghost mode")
-                                continue
-                            }
+                            if (profileObj.optBoolean("stealth_mode", false)) continue
 
-                            // Check heartbeat - user is online only if heartbeat is recent
                             val lastHeartbeat = profileObj.optString("last_heartbeat_at", null)
-                            if (lastHeartbeat.isNullOrEmpty()) {
-                                continue  // No heartbeat = not logged in
-                            }
+                            if (lastHeartbeat.isNullOrEmpty()) continue
 
-                            // Check if heartbeat is within 3 minutes
-                            val trackingEnabled = profileObj.optBoolean("tracking_enabled", true)
-                            if (!trackingEnabled) {
-                                continue  // Tracking disabled = offline
-                            }
+                            if (!profileObj.optBoolean("tracking_enabled", true)) continue
 
-                            val heartbeatTime = java.time.Instant.parse(lastHeartbeat)
-                            val threeMinAgo = java.time.Instant.now().minusSeconds(180)
-                            if (heartbeatTime.isBefore(threeMinAgo)) {
-                                continue  // Heartbeat too old = no internet or app closed
+                            // Check heartbeat is within online threshold
+                            try {
+                                val heartbeatTime = java.time.Instant.parse(lastHeartbeat)
+                                val thresholdAgo = java.time.Instant.now().minusSeconds(ONLINE_THRESHOLD_SECONDS)
+                                if (heartbeatTime.isBefore(thresholdAgo)) continue
+                            } catch (e: Exception) {
+                                continue
                             }
 
                             // Calculate distance
                             val distance = haversineDistance(myLat, myLng, lat, lng)
-
                             if (distance <= radiusKm) {
                                 val brotherId = profileObj.optString("id", "")
                                 val brotherName = profileObj.optString("full_name", "Un QH")
 
-                                // Check cooldown
                                 val now = System.currentTimeMillis()
                                 val lastNotified = proximityCooldowns[brotherId] ?: 0L
 
@@ -691,7 +760,7 @@ class LocationForegroundService : Service() {
     }
 
     private fun haversineDistance(lat1: Double, lng1: Double, lat2: Double, lng2: Double): Double {
-        val R = 6371.0 // Earth's radius in km
+        val R = 6371.0
         val dLat = Math.toRadians(lat2 - lat1)
         val dLng = Math.toRadians(lng2 - lng1)
         val a = Math.sin(dLat / 2) * Math.sin(dLat / 2) +
@@ -700,8 +769,6 @@ class LocationForegroundService : Service() {
         val c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a))
         return R * c
     }
-
-    private var notificationIdCounter = 2000
 
     private fun showProximityNotification(brotherName: String, distanceKm: Double, radiusKm: Double) {
         val notificationManager = getSystemService(NotificationManager::class.java)
@@ -722,7 +789,7 @@ class LocationForegroundService : Service() {
             .setContentIntent(pendingIntent)
             .build()
 
-        notificationManager.notify(notificationIdCounter++, notification)
+        notificationManager.notify(notificationIdCounter.getAndIncrement(), notification)
         android.util.Log.d("LocationService", "Proximity notification shown for $brotherName")
     }
 
@@ -738,9 +805,23 @@ class LocationForegroundService : Service() {
         )
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        // Use setExactAndAllowWhileIdle() on API 23+ so the alarm fires in Doze mode.
-        // On older versions, fall back to set().
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            // Android 12+: Check if we can schedule exact alarms
+            if (alarmManager.canScheduleExactAlarms()) {
+                alarmManager.setExactAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 5000,
+                    pendingIntent
+                )
+            } else {
+                // Fall back to inexact alarm — still fires, just less precisely
+                alarmManager.setAndAllowWhileIdle(
+                    AlarmManager.RTC_WAKEUP,
+                    System.currentTimeMillis() + 5000,
+                    pendingIntent
+                )
+            }
+        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             alarmManager.setExactAndAllowWhileIdle(
                 AlarmManager.RTC_WAKEUP,
                 System.currentTimeMillis() + 5000,
@@ -769,7 +850,6 @@ class LocationForegroundService : Service() {
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
-        // Schedule restart so the service recovers from system-initiated kills
         android.util.Log.w("LocationService", "Service destroyed, scheduling restart...")
         scheduleRestart()
     }

@@ -37,16 +37,14 @@ class LocationPlugin : Plugin() {
     }
 
     @PluginMethod
-    fun startLocationService(call: PluginCall) {
+    fun startLocationUpdates(call: PluginCall) {
         val context: Context = activity.applicationContext
 
-        // Check location permissions
         if (!hasLocationPermissions()) {
             requestAllPermissions(call, "startLocationServiceCallback")
             return
         }
 
-        // For Android 10+, we need background location permission
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             if (!hasBackgroundLocationPermission()) {
                 requestPermissionForAlias("backgroundLocation", call, "startLocationServiceCallback")
@@ -54,7 +52,6 @@ class LocationPlugin : Plugin() {
             }
         }
 
-        // Request battery optimization exemption so Doze mode doesn't throttle heartbeat requests
         requestBatteryOptimizationExemption(context)
 
         try {
@@ -65,33 +62,14 @@ class LocationPlugin : Plugin() {
         }
     }
 
-    /**
-     * Requests the system to exempt this app from battery optimizations (Doze mode).
-     * Without this, Android will throttle network requests after a few minutes of screen-off,
-     * causing heartbeat failures and the user appearing "offline".
-     */
-    private fun requestBatteryOptimizationExemption(context: Context) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
-            if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
-                try {
-                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
-                        data = Uri.parse("package:${context.packageName}")
-                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                    }
-                    context.startActivity(intent)
-                    android.util.Log.d("LocationPlugin", "Requested battery optimization exemption")
-                } catch (e: Exception) {
-                    android.util.Log.e("LocationPlugin", "Failed to request battery optimization: ${e.message}")
-                }
-            } else {
-                android.util.Log.d("LocationPlugin", "Already exempt from battery optimizations")
-            }
-        }
+    // Keep old method name for backward compatibility
+    @PluginMethod
+    fun startLocationService(call: PluginCall) {
+        startLocationUpdates(call)
     }
 
     @PluginMethod
-    fun stopLocationService(call: PluginCall) {
+    fun stopLocationUpdates(call: PluginCall) {
         val context: Context = activity.applicationContext
         try {
             LocationForegroundService.stop(context)
@@ -99,6 +77,11 @@ class LocationPlugin : Plugin() {
         } catch (e: Exception) {
             call.reject("Failed to stop location service: ${e.message}")
         }
+    }
+
+    @PluginMethod
+    fun stopLocationService(call: PluginCall) {
+        stopLocationUpdates(call)
     }
 
     @PluginMethod
@@ -130,12 +113,48 @@ class LocationPlugin : Plugin() {
         call.resolve(ret)
     }
 
+    @PluginMethod
+    fun setTrackingEnabled(call: PluginCall) {
+        val enabled = call.getBoolean("enabled") ?: true
+        LocationForegroundService.setTrackingEnabled(enabled)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setForegroundAccuracy(call: PluginCall) {
+        LocationForegroundService.setBackgroundMode(false)
+        call.resolve()
+    }
+
+    @PluginMethod
+    fun setBackgroundAccuracy(call: PluginCall) {
+        LocationForegroundService.setBackgroundMode(true)
+        call.resolve()
+    }
+
     @PermissionCallback
     private fun startLocationServiceCallback(call: PluginCall) {
         if (hasLocationPermissions() && hasBackgroundLocationPermission()) {
-            startLocationService(call)
+            startLocationUpdates(call)
         } else {
             call.reject("Location permissions denied")
+        }
+    }
+
+    private fun requestBatteryOptimizationExemption(context: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val powerManager = context.getSystemService(Context.POWER_SERVICE) as PowerManager
+            if (!powerManager.isIgnoringBatteryOptimizations(context.packageName)) {
+                try {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS).apply {
+                        data = Uri.parse("package:${context.packageName}")
+                        addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                    }
+                    context.startActivity(intent)
+                } catch (e: Exception) {
+                    android.util.Log.e("LocationPlugin", "Failed to request battery optimization: ${e.message}")
+                }
+            }
         }
     }
 
