@@ -78,6 +78,40 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         print("[AppDelegate] LocationManager started with userId=\(userId)")
     }
 
+    // MARK: - Silent Push Notifications & Background Fetch
+    // These methods wake the app to send heartbeats even when the user is stationary.
+
+    func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        print("[AppDelegate] Received remote notification (silent push)")
+
+        // If the LocationManager is not running, restore it from storage
+        if LocationServicePlugin.sharedLocationManager == nil {
+            restoreLocationManagerFromStorage()
+        }
+
+        // Send heartbeat immediately — this keeps the user "online"
+        LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
+
+        // Give network calls time to complete before telling iOS we're done
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
+            completionHandler(.newData)
+        }
+    }
+
+    func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
+        print("[AppDelegate] Background fetch triggered")
+
+        if LocationServicePlugin.sharedLocationManager == nil {
+            restoreLocationManagerFromStorage()
+        }
+
+        LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
+
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) {
+            completionHandler(.newData)
+        }
+    }
+
     // Pass APNS token to Firebase, then forward the FCM token to Capacitor
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken

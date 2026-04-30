@@ -54,6 +54,11 @@
 	<string>Fraterna necesita tu ubicación en segundo plano para alertarte cuando un QH esté cerca, incluso cuando la app no esté abierta.</string>
 	<key>NSLocationAlwaysUsageDescription</key>
 	<string>Fraterna necesita acceso continuo a tu ubicación para alertas de proximidad entre QH.</string>
+	<key>NSLocationTemporaryUsageDescriptionDictionary</key>
+	<dict>
+		<key>PreciseLocation</key>
+		<string>Fraterna necesita ubicación precisa para alertas de proximidad exactas entre QH.</string>
+	</dict>
 	<!-- Camera & Photo Permissions -->
 	<key>NSCameraUsageDescription</key>
 	<string>Fraterna necesita acceso a la cámara para tomar fotos y videos en el chat de emergencia.</string>

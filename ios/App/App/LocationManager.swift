@@ -15,7 +15,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var proximityRadiusKm: Double = 5.0
     private var proximityAlertsEnabled: Bool = true
     private var heartbeatTimer: DispatchSourceTimer?
-    private let heartbeatInterval: TimeInterval = 90 // 1.5 minutes — tight enough for the 3-min online threshold
+    private let heartbeatInterval: TimeInterval = 60 // 1 minute — fast enough for the 3-min online threshold
+    private var lastHeartbeatTime: Date = .distantPast
+    private var isInBackground: Bool = false
 
     override init() {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String,
@@ -29,10 +31,17 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         supabaseAnonKey = key
         super.init()
 
+        locationManager.delegate = self
+        locationManager.allowsBackgroundLocationUpdates = true
+        locationManager.showsBackgroundLocationIndicator = true
+        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.activityType = .otherNavigation
+
         // Listen for foreground/background transitions natively so we don't
         // depend on the Capacitor JS bridge (which is suspended in background).
         NotificationCenter.default.addObserver(self, selector: #selector(appDidEnterBackground), name: UIApplication.didEnterBackgroundNotification, object: nil)
         NotificationCenter.default.addObserver(self, selector: #selector(appDidBecomeActive), name: UIApplication.didBecomeActiveNotification, object: nil)
+        NotificationCenter.default.addObserver(self, selector: #selector(appWillTerminate), name: UIApplication.willTerminateNotification, object: nil)
     }
 
     func startLocationUpdates(userId: String, authToken: String) {
@@ -50,27 +59,47 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             print("[LocationManager] Notification permission granted: \(granted)")
         }
 
-        locationManager.delegate = self
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = true
-        locationManager.pausesLocationUpdatesAutomatically = false
-        locationManager.activityType = .otherNavigation
-        locationManager.distanceFilter = 10.0
+        // Request "Always" authorization — this is CRITICAL for background tracking.
+        // Without "Always", location updates stop when the app is suspended.
+        let status = CLLocationManager.authorizationStatus()
+        if status == .notDetermined {
+            locationManager.requestAlwaysAuthorization()
+        } else if status == .authorizedWhenInUse {
+            // On iOS 13+, upgrade to "Always" requires going to Settings
+            // Request again — iOS may show the upgrade prompt
+            locationManager.requestAlwaysAuthorization()
+        }
 
-        locationManager.requestAlwaysAuthorization()
+        // Configure for continuous background tracking:
+        // - kCLLocationAccuracyNearestTenMeters in background prevents iOS throttling
+        // - kCLLocationAccuracyBest in foreground for precise tracking
+        // - distanceFilter = kCLDistanceFilterNone = report every GPS update
+        if isInBackground {
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            locationManager.distanceFilter = kCLDistanceFilterNone
+        } else {
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = kCLDistanceFilterNone
+        }
+
         locationManager.startUpdatingLocation()
+        // Significant location changes work even when the app is terminated.
+        // iOS relaunches the app with launchOptions[.location] when a significant change occurs.
         locationManager.startMonitoringSignificantLocationChanges()
 
-        // Start heartbeat timer immediately — don't wait for JS to call setBackgroundAccuracy.
-        // The timer is cheap (one PATCH every 90s) and ensures the user stays "online"
-        // even if the JS bridge never fires the background transition.
+        // Start heartbeat timer immediately.
+        // Note: this timer SUSPENDS when the app is suspended. It only fires
+        // when the app is in the foreground or briefly awakened by location updates.
+        // The PRIMARY heartbeat mechanism is didUpdateLocations.
         startHeartbeatTimer()
+
+        // Send an immediate heartbeat to confirm we're online
+        sendHeartbeatNow()
 
         // Load profile settings
         loadProfileSettings()
 
-        print("[LocationManager] Location updates started for userId=\(userId)")
+        print("[LocationManager] Location updates started for userId=\(userId), authStatus=\(status.rawValue)")
     }
 
     func stopLocationUpdates() {
@@ -87,27 +116,56 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             locationManager.startUpdatingLocation()
             locationManager.startMonitoringSignificantLocationChanges()
             startHeartbeatTimer()
+            sendHeartbeatNow()
         } else {
             locationManager.stopUpdatingLocation()
             locationManager.stopMonitoringSignificantLocationChanges()
             stopHeartbeatTimer()
-            clearHeartbeat()
+            // Don't set last_heartbeat_at to null — let it expire naturally on server
+            print("[LocationManager] Tracking disabled — heartbeat will expire naturally")
+        }
+    }
+
+    // MARK: - Authorization
+
+    func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
+        print("[LocationManager] Authorization changed to: \(status.rawValue)")
+
+        if status == .authorizedAlways {
+            // Great — full background tracking is available
+            if userId != nil {
+                locationManager.startUpdatingLocation()
+                locationManager.startMonitoringSignificantLocationChanges()
+            }
+        } else if status == .authorizedWhenInUse {
+            // User only granted "When In Use" — background tracking will stop when app is suspended
+            // We need "Always" for reliable background tracking
+            print("[LocationManager] WARNING: Only 'When In Use' authorization. Background tracking will be limited.")
+            print("[LocationManager] User must go to Settings > Fraterna > Location > Always to enable full background tracking")
+            // Still start updates — they'll work while app is in foreground
+            if userId != nil {
+                locationManager.startUpdatingLocation()
+                locationManager.startMonitoringSignificantLocationChanges()
+            }
+        } else if status == .denied || status == .restricted {
+            print("[LocationManager] Location authorization denied or restricted")
         }
     }
 
     // JS bridge calls these, but the native NotificationCenter observers
-    // are the authoritative source. The JS calls are kept as a fallback.
+    // are the authoritative source for accuracy transitions.
     func setForegroundAccuracy() {
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10.0
-        // Keep heartbeat running even in foreground — it's cheap and ensures
-        // the user never appears offline if location updates slow down.
+        locationManager.distanceFilter = kCLDistanceFilterNone
     }
 
     func setBackgroundAccuracy() {
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        // Use NearestTenMeters in background to prevent iOS from throttling updates.
+        // kCLLocationAccuracyBest in background causes iOS to aggressively throttle
+        // or suspend location updates to preserve battery.
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         locationManager.distanceFilter = kCLDistanceFilterNone
-        // Heartbeat is already running from startLocationUpdates — just ensure it stays on.
+        // Ensure heartbeat is running in background
         if heartbeatTimer == nil {
             startHeartbeatTimer()
         }
@@ -117,19 +175,32 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // These fire regardless of whether the Capacitor webview is alive.
 
     @objc private func appDidEnterBackground() {
+        isInBackground = true
         print("[LocationManager] App entered background (native)")
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        // Switch to battery-efficient accuracy for background.
+        // This prevents iOS from throttling or killing our location updates.
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
         locationManager.distanceFilter = kCLDistanceFilterNone
+        // Ensure heartbeat timer is running
         if heartbeatTimer == nil {
             startHeartbeatTimer()
         }
     }
 
     @objc private func appDidBecomeActive() {
+        isInBackground = false
         print("[LocationManager] App became active (native)")
+        // Switch to high accuracy in foreground for precise tracking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = 10.0
-        // Don't stop heartbeat timer — it's cheap insurance.
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        // Send immediate heartbeat on resume to update status quickly
+        sendHeartbeatNow()
+    }
+
+    @objc private func appWillTerminate() {
+        print("[LocationManager] App will terminate — saving state")
+        // Don't stop location updates on termination.
+        // startMonitoringSignificantLocationChanges will relaunch the app.
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -145,9 +216,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
               let userId = userId,
               trackingEnabled else { return }
 
+        // This is the PRIMARY heartbeat mechanism.
+        // Every location update triggers a heartbeat + location upload.
+        // The DispatchSourceTimer is a backup that only works in foreground.
+
         // Protect network calls with a UIBackgroundTask so iOS doesn't
-        // suspend the app before they complete. The task is ended when
-        // all network calls finish.
+        // suspend the app before they complete.
         var bgTaskId: UIBackgroundTaskIdentifier = .invalid
         bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FraternaLocationUpdate") { [weak self] in
             // Expiration handler — iOS is about to suspend us. End cleanly.
@@ -185,7 +259,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
-        print("[LocationManager] Location updates paused (user stationary)")
+        // This should NOT be called because pausesLocationUpdatesAutomatically = false.
+        // But if it is, restart updates immediately and start the heartbeat timer
+        // to keep the user online.
+        print("[LocationManager] ⚠️ Location updates PAUSED — restarting immediately")
+        manager.startUpdatingLocation()
+        manager.startMonitoringSignificantLocationChanges()
         startHeartbeatTimer()
     }
 
@@ -194,23 +273,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     // MARK: - Heartbeat Timer
-    // Runs continuously once started. Fires when iOS wakes the app for
-    // location updates or other background events. Does NOT fire while
-    // the app is fully suspended, but didUpdateLocations handles that case.
+    // This timer ONLY fires when the app is not suspended (foreground or briefly
+    // awakened by location updates). It's a backup for the primary mechanism
+    // (didUpdateLocations). The timer interval is 60 seconds.
 
     private func startHeartbeatTimer() {
         // Don't restart if already running
         if heartbeatTimer != nil { return }
 
         guard userId != nil else { return }
-
-        // Send an immediate heartbeat
-        refreshTokenAsync { [weak self] in
-            guard let self = self else { return }
-            if let userId = self.userId, let token = self.authToken {
-                self.sendHeartbeat(userId: userId, authToken: token)
-            }
-        }
 
         let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
         timer.schedule(deadline: .now() + heartbeatInterval, repeating: heartbeatInterval, leeway: .seconds(5))
@@ -231,6 +302,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private func stopHeartbeatTimer() {
         heartbeatTimer?.cancel()
         heartbeatTimer = nil
+    }
+
+    /// Send heartbeat immediately (not from timer). Used on app resume and start.
+    private func sendHeartbeatNow() {
+        guard let userId = userId else { return }
+        refreshTokenAsync { [weak self] in
+            guard let self = self, let token = self.authToken else { return }
+            self.sendHeartbeat(userId: userId, authToken: token)
+        }
     }
 
     // MARK: - Token Refresh (ASYNC — no semaphore)
@@ -371,7 +451,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
 
-            let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled"
+            let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled"
             guard let url = URL(string: urlString) else { return }
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -382,6 +462,27 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 do {
                     guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                           let profile = profiles.first else { return }
+
+                    // Update tracking/stealth settings from server
+                    if let tracking = profile["tracking_enabled"] as? Bool {
+                        self.trackingEnabled = tracking
+                        if tracking {
+                            self.locationManager.startUpdatingLocation()
+                            self.locationManager.startMonitoringSignificantLocationChanges()
+                            self.startHeartbeatTimer()
+                        } else {
+                            self.locationManager.stopUpdatingLocation()
+                            self.locationManager.stopMonitoringSignificantLocationChanges()
+                            self.stopHeartbeatTimer()
+                        }
+                    }
+                    if let stealth = profile["stealth_mode"] as? Bool, stealth {
+                        // Stealth mode = don't upload location, but still send heartbeats
+                        // so the user appears online but location doesn't update
+                        self.trackingEnabled = false
+                        self.locationManager.stopUpdatingLocation()
+                        self.stopHeartbeatTimer()
+                    }
                     if let radius = profile["proximity_radius_km"] as? Double {
                         self.proximityRadiusKm = radius
                     }
@@ -398,6 +499,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // MARK: - Heartbeat
 
     private func sendHeartbeat(userId: String, authToken: String) {
+        // Throttle: don't send more than once per 30 seconds
+        let now = Date()
+        guard now.timeIntervalSince(lastHeartbeatTime) >= 30 else {
+            print("[LocationManager] Heartbeat throttled (sent \(Int(now.timeIntervalSince(lastHeartbeatTime)))s ago)")
+            return
+        }
+        lastHeartbeatTime = now
+
         let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
@@ -414,9 +523,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
-                    print("[LocationManager] Heartbeat sent successfully")
+                    print("[LocationManager] ✓ Heartbeat sent")
                 } else {
-                    print("[LocationManager] Heartbeat failed: \(httpResponse.statusCode)")
+                    print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
                         print("[LocationManager] Got 401, forcing token refresh...")
                         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
@@ -434,16 +543,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }.resume()
     }
 
-    private func clearHeartbeat() {
-        // Don't set last_heartbeat_at to null on the server — that immediately
-        // marks the user as offline. Just stop sending heartbeats and let the
-        // server's 3-minute threshold expire naturally.
-        print("[LocationManager] Heartbeat stopped — will expire naturally on server")
-    }
-
     // MARK: - Location Update
 
     private func updateLocation(userId: String, authToken: String, location: CLLocation) {
+        // Check privacy flags — if stealth mode or tracking disabled, skip upload
+        // but still allow heartbeats to keep the user "online" if they want to appear online
+
         let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -468,9 +573,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         URLSession.shared.dataTask(with: request) { _, response, error in
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 204 {
-                    print("[LocationManager] Location updated in Supabase")
+                    print("[LocationManager] ✓ Location updated")
                 } else {
-                    print("[LocationManager] Location update failed: \(httpResponse.statusCode)")
+                    print("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
                 }
             }
         }.resume()
@@ -495,6 +600,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
             guard let self = self, let data = data, error == nil else { return }
 
+            // Also refresh profile settings periodically
             self.loadProfileSettings()
 
             do {
