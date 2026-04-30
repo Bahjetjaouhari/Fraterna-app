@@ -47,19 +47,14 @@ class BootReceiver : BroadcastReceiver() {
             Log.e("FraternaBoot", "Error checking token expiry: ${e.message}")
         }
 
-        // On Android 12+, check if we can start a foreground service from background
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val activityManager = context.getSystemService(Context.ACTIVITY_SERVICE) as? android.app.ActivityManager
-            if (activityManager != null && !activityManager.isBackgroundStartAllowed) {
-                Log.w("FraternaBoot", "Background start not allowed on Android 12+, service will start when app opens")
-                return
-            }
-        }
-
         try {
             LocationForegroundService.start(context)
             Log.d("FraternaBoot", "Location service start requested successfully")
         } catch (e: Exception) {
+            // On Android 12+ (API 31+), starting a foreground service from background
+            // throws ForegroundServiceStartNotAllowedException if the app doesn't have
+            // the "Allow all the time" location permission. The service will start
+            // when the user opens the app next time.
             Log.e("FraternaBoot", "Failed to start location service: ${e.javaClass.simpleName}: ${e.message}")
         }
     }
