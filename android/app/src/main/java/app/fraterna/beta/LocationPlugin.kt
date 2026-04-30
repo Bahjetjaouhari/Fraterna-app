@@ -122,13 +122,13 @@ class LocationPlugin : Plugin() {
 
     @PluginMethod
     fun setForegroundAccuracy(call: PluginCall) {
-        LocationForegroundService.setBackgroundMode(false)
+        LocationForegroundService.updateBackgroundMode(false)
         call.resolve()
     }
 
     @PluginMethod
     fun setBackgroundAccuracy(call: PluginCall) {
-        LocationForegroundService.setBackgroundMode(true)
+        LocationForegroundService.updateBackgroundMode(true)
         call.resolve()
     }
 

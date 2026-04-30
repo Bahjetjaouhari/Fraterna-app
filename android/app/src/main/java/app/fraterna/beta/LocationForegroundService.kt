@@ -76,7 +76,7 @@ class LocationForegroundService : Service() {
             trackingEnabledFromJS = enabled
         }
 
-        fun setBackgroundMode(bg: Boolean) {
+        fun updateBackgroundMode(bg: Boolean) {
             backgroundMode = bg
         }
     }
