@@ -148,7 +148,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Protect network calls with a UIBackgroundTask so iOS doesn't
         // suspend the app before they complete. The task is ended when
         // all network calls finish.
-        let bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FraternaLocationUpdate") { [weak self] in
+        var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FraternaLocationUpdate") { [weak self] in
             // Expiration handler — iOS is about to suspend us. End cleanly.
             self?.endBackgroundTask(bgTaskId)
         }
