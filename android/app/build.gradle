@@ -8,8 +8,8 @@ android {
         applicationId "app.fraterna.beta"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 42
-        versionName "3.18"
+        versionCode 43
+        versionName "3.19"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Supabase config from local.properties (not committed to git)
@@ -62,6 +62,9 @@ dependencies {
 
     // OkHttp for HTTP requests (heartbeat)
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+    // Lifecycle for ProcessLifecycleOwner (app fg/bg detection)
+    implementation 'androidx.lifecycle:lifecycle-process:2.7.0'
 }
 
 apply from: 'capacitor.build.gradle'

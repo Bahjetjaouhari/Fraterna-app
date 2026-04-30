@@ -266,7 +266,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange(
-      async (_event, session) => {
+      async (event, session) => {
         setSession(session);
         setUser(session?.user ?? null);
 
@@ -278,13 +278,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setProfile(null);
           setRoles([]);
           stopHeartbeat();
-          // Stop native location service when session is null
-          // (logout, token expiry, session invalidation)
-          if (Capacitor.isNativePlatform()) {
+          // Only stop native location service on explicit SIGN_OUT event.
+          // Do NOT stop on SIGNED_IN, TOKEN_REFRESHED, etc. which can
+          // transiently have null sessions during token refresh cycles.
+          if (event === 'SIGNED_OUT' && Capacitor.isNativePlatform()) {
             try {
               Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
             } catch (e) {
-              console.error('Failed to stop location service on session null:', e);
+              console.error('Failed to stop location service on sign out:', e);
             }
           }
         }

@@ -23,6 +23,10 @@
 -keep class com.google.android.gms.location.** { *; }
 -dontwarn com.google.android.gms.location.**
 
+# AndroidX Lifecycle (ProcessLifecycleOwner)
+-keep class androidx.lifecycle.** { *; }
+-dontwarn androidx.lifecycle.**
+
 # Preserve line numbers for debugging
 -keepattributes SourceFile,LineNumberTable
 -renamesourcefileattribute SourceFile

@@ -62,10 +62,11 @@
             tools:replace="android:enabled" />
 
         <!-- Boot Receiver - auto-start location service when phone restarts -->
+        <!-- exported="true" required on Android 12+ to receive BOOT_COMPLETED broadcasts -->
         <receiver
             android:name=".BootReceiver"
             android:enabled="true"
-            android:exported="false">
+            android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />

@@ -15,11 +15,17 @@ import android.os.Looper
 import android.os.PowerManager
 import android.util.Base64
 import androidx.core.app.NotificationCompat
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleObserver
+import androidx.lifecycle.OnLifecycleEvent
+import androidx.lifecycle.ProcessLifecycleOwner
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -84,6 +90,7 @@ class LocationForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private var locationCallback: LocationCallback? = null
+    private var heartbeatTimerJob: Job? = null
 
     // OkHttpClient with proper timeouts to prevent hangs on poor connectivity
     private val httpClient = OkHttpClient.Builder()
@@ -142,6 +149,51 @@ class LocationForegroundService : Service() {
         super.onCreate()
         createNotificationChannels()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
+
+        // Monitor app lifecycle to adjust location accuracy between fg/bg
+        ProcessLifecycleOwner.get().lifecycle.addObserver(object : LifecycleObserver {
+            @OnLifecycleEvent(Lifecycle.Event.ON_STOP)
+            fun onAppBackgrounded() {
+                android.util.Log.d("LocationService", "App moved to background — switching to balanced accuracy")
+                backgroundMode = true
+                restartLocationRequest()
+            }
+
+            @OnLifecycleEvent(Lifecycle.Event.ON_START)
+            fun onAppForegrounded() {
+                android.util.Log.d("LocationService", "App moved to foreground — switching to high accuracy")
+                backgroundMode = false
+                restartLocationRequest()
+            }
+        })
+    }
+
+    /**
+     * Re-registers location updates with current backgroundMode setting.
+     * Called when app transitions between foreground and background.
+     */
+    private fun restartLocationRequest() {
+        if (!isRunning) return
+        locationCallback?.let {
+            fusedLocationClient?.removeLocationUpdates(it)
+        }
+
+        val priority = if (backgroundMode) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
+        val intervalMs = if (backgroundMode) 30000L else 15000L
+
+        val locationRequest = LocationRequest.Builder(priority, intervalMs).apply {
+            setMinUpdateIntervalMillis(if (backgroundMode) 20000L else 10000L)
+            setWaitForAccurateLocation(!backgroundMode)
+            setMaxUpdateDelayMillis(if (backgroundMode) 60000L else 30000L)
+        }.build()
+
+        locationCallback?.let { callback ->
+            try {
+                fusedLocationClient?.requestLocationUpdates(locationRequest, callback, Looper.getMainLooper())
+            } catch (e: SecurityException) {
+                android.util.Log.e("LocationService", "Security exception on restart: ${e.message}")
+            }
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -210,6 +262,12 @@ class LocationForegroundService : Service() {
 
         acquireWakeLock()
         loadUserSession()
+        startHeartbeatTimer()
+
+        // Remove old callback before registering a new one (prevents duplicates on START_STICKY restart)
+        locationCallback?.let {
+            fusedLocationClient?.removeLocationUpdates(it)
+        }
 
         // Adjust location request based on background mode
         val priority = if (backgroundMode) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
@@ -257,8 +315,8 @@ class LocationForegroundService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "fraterna:LocationServiceWakeLock"
         ).apply {
-            // 10-minute timeout — re-acquired on each location update via startLocationUpdates
-            acquire(10 * 60 * 1000L)
+            // No timeout — held for the lifetime of the service, released in stopLocationUpdates()
+            acquire()
         }
     }
 
@@ -276,12 +334,43 @@ class LocationForegroundService : Service() {
         trackingEnabledFromJS = true
         backgroundMode = false
         sessionLoadRetries = 0
+        stopHeartbeatTimer()
         locationCallback?.let {
             fusedLocationClient?.removeLocationUpdates(it)
         }
         releaseWakeLock()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
+    }
+
+    /**
+     * Independent heartbeat timer — fires every 90 seconds regardless of location updates.
+     * This ensures the user stays "online" even when FusedLocationProvider throttles
+     * updates (Doze mode, stationary user, GPS signal loss).
+     * Matches the iOS LocationManager heartbeatTimer behavior.
+     */
+    private fun startHeartbeatTimer() {
+        stopHeartbeatTimer()
+        heartbeatTimerJob = serviceScope.launch {
+            while (true) {
+                delay(90_000L) // 90 seconds
+                if (!isRunning) break
+                try {
+                    refreshToken()
+                    sendHeartbeat()
+                    // Refresh profile settings periodically (overrides 5-min TTL)
+                    loadProfileSettings()
+                } catch (e: Exception) {
+                    android.util.Log.e("LocationService", "Heartbeat timer error: ${e.message}")
+                }
+            }
+        }
+        android.util.Log.d("LocationService", "Heartbeat timer started (90s interval)")
+    }
+
+    private fun stopHeartbeatTimer() {
+        heartbeatTimerJob?.cancel()
+        heartbeatTimerJob = null
     }
 
     private fun loadUserSession() {
@@ -516,11 +605,17 @@ class LocationForegroundService : Service() {
     }
 
     private fun sendHeartbeat() {
-        val userId = currentUserId ?: return
+        val userId = currentUserId ?: run {
+            android.util.Log.w("LocationService", "Skipping heartbeat: no userId")
+            return
+        }
 
         serviceScope.launch {
             try {
-                val token = bearerToken ?: return@launch
+                val token = bearerToken ?: run {
+                    android.util.Log.w("LocationService", "Skipping heartbeat: no auth token")
+                    return@launch
+                }
 
                 val jsonBody = JSONObject().apply {
                     put("last_heartbeat_at", java.time.Instant.now().toString())
@@ -567,7 +662,10 @@ class LocationForegroundService : Service() {
      * CRITICAL: Respects stealth_mode and tracking_enabled — skips upload when either is off.
      */
     private fun updateLocationInSupabase(location: Location) {
-        val userId = currentUserId ?: return
+        val userId = currentUserId ?: run {
+            android.util.Log.w("LocationService", "Skipping location update: no userId")
+            return
+        }
 
         // Check privacy flags from both profile AND JS bridge
         if (stealthMode || !trackingEnabledFromProfile || !trackingEnabledFromJS) {
@@ -797,42 +895,56 @@ class LocationForegroundService : Service() {
         val restartIntent = Intent(applicationContext, LocationForegroundService::class.java).apply {
             action = ACTION_START
         }
-        val pendingIntent = PendingIntent.getService(
-            applicationContext,
-            1,
-            restartIntent,
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
-        )
+        // Use getForegroundService() for Android 8+ (API 26+) — required to start as foreground service
+        val pendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            PendingIntent.getForegroundService(
+                applicationContext,
+                1,
+                restartIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
+            )
+        } else {
+            PendingIntent.getService(
+                applicationContext,
+                1,
+                restartIntent,
+                PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_ONE_SHOT
+            )
+        }
         val alarmManager = getSystemService(Context.ALARM_SERVICE) as AlarmManager
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            // Android 12+: Check if we can schedule exact alarms
-            if (alarmManager.canScheduleExactAlarms()) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                // Android 12+: Check if we can schedule exact alarms
+                if (alarmManager.canScheduleExactAlarms()) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        System.currentTimeMillis() + 5000,
+                        pendingIntent
+                    )
+                } else {
+                    // Fall back to inexact alarm — still fires, just less precisely
+                    alarmManager.setAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        System.currentTimeMillis() + 5000,
+                        pendingIntent
+                    )
+                }
+            } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                 alarmManager.setExactAndAllowWhileIdle(
                     AlarmManager.RTC_WAKEUP,
                     System.currentTimeMillis() + 5000,
                     pendingIntent
                 )
             } else {
-                // Fall back to inexact alarm — still fires, just less precisely
-                alarmManager.setAndAllowWhileIdle(
+                alarmManager.set(
                     AlarmManager.RTC_WAKEUP,
                     System.currentTimeMillis() + 5000,
                     pendingIntent
                 )
             }
-        } else if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            alarmManager.setExactAndAllowWhileIdle(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 5000,
-                pendingIntent
-            )
-        } else {
-            alarmManager.set(
-                AlarmManager.RTC_WAKEUP,
-                System.currentTimeMillis() + 5000,
-                pendingIntent
-            )
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Failed to schedule restart: ${e.message}")
         }
     }
 
