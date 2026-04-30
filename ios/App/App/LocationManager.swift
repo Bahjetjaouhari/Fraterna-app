@@ -304,8 +304,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         heartbeatTimer = nil
     }
 
-    /// Send heartbeat immediately (not from timer). Used on app resume and start.
-    private func sendHeartbeatNow() {
+    /// Send heartbeat immediately (not from timer). Used on app resume, start,
+    /// and by AppDelegate when woken by silent push / background fetch.
+    @objc func sendHeartbeatNow() {
         guard let userId = userId else { return }
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
