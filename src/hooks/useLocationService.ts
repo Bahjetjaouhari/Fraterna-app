@@ -9,9 +9,10 @@ interface LocationServicePlugin {
   setTrackingEnabled: (options: { enabled: boolean }) => Promise<void>;
   setForegroundAccuracy: () => Promise<void>;
   setBackgroundAccuracy: () => Promise<void>;
+  updateAuthToken: (options: { authToken: string; userId?: string }) => Promise<void>;
 }
 
-const LocationService = Capacitor.registerPlugin<LocationServicePlugin>('LocationService');
+export const LocationService = Capacitor.registerPlugin<LocationServicePlugin>('LocationService');
 
 export const useLocationService = () => {
   const [isRunning, setIsRunning] = useState(false);

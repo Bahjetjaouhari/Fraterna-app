@@ -45,6 +45,9 @@ class LocationForegroundService : Service() {
         const val ACTION_START = "app.fraterna.beta.action.START_LOCATION"
         const val ACTION_STOP = "app.fraterna.beta.action.STOP_LOCATION"
         const val ACTION_HEARTBEAT = "app.fraterna.beta.action.HEARTBEAT_ALARM"
+        const val ACTION_UPDATE_TOKEN = "app.fraterna.beta.action.UPDATE_TOKEN"
+        const val EXTRA_AUTH_TOKEN = "app.fraterna.beta.extra.AUTH_TOKEN"
+        const val EXTRA_USER_ID = "app.fraterna.beta.extra.USER_ID"
         const val ONLINE_THRESHOLD_SECONDS = 300L // Must match is_user_active() SQL function (5 minutes)
         private const val HEARTBEAT_ALARM_INTERVAL_MS = 90_000L // 90 seconds
         private const val HEARTBEAT_ALARM_REQUEST_CODE = 9001
@@ -111,6 +114,15 @@ class LocationForegroundService : Service() {
         @Volatile
         private var isRunning = false
 
+        // User session data — shared between companion (static) and instance methods
+        @Volatile
+        var currentUserId: String? = null
+            internal set
+
+        @Volatile
+        var bearerToken: String? = null
+            internal set
+
         // JS bridge can update these from the webview
         @Volatile
         var trackingEnabledFromJS: Boolean = true
@@ -120,9 +132,11 @@ class LocationForegroundService : Service() {
 
         fun isServiceRunning(): Boolean = isRunning
 
-        fun start(context: Context) {
+        fun start(context: Context, authToken: String? = null, userId: String? = null) {
             val intent = Intent(context, LocationForegroundService::class.java).apply {
                 action = ACTION_START
+                authToken?.let { putExtra(EXTRA_AUTH_TOKEN, it) }
+                userId?.let { putExtra(EXTRA_USER_ID, it) }
             }
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent)
@@ -145,6 +159,14 @@ class LocationForegroundService : Service() {
         fun updateBackgroundMode(bg: Boolean) {
             backgroundMode = bg
         }
+
+        fun updateAuthToken(authToken: String, userId: String? = null) {
+            bearerToken = authToken
+            if (userId != null) {
+                currentUserId = userId
+            }
+            android.util.Log.d("LocationService", "Auth token updated from JS bridge")
+        }
     }
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -161,11 +183,14 @@ class LocationForegroundService : Service() {
 
     private var wakeLock: PowerManager.WakeLock? = null
 
-    // User session data (accessed from multiple threads)
-    @Volatile
-    private var currentUserId: String? = null
-    @Volatile
-    private var bearerToken: String? = null
+    // User session data — accessed from instance methods and companion object (static updateAuthToken)
+    // These reference the companion-level volatile fields
+    private var currentUserId: String?
+        get() = Companion.currentUserId
+        set(value) { Companion.currentUserId = value }
+    private var bearerToken: String?
+        get() = Companion.bearerToken
+        set(value) { Companion.bearerToken = value }
     @Volatile
     private var profileSettings: ProfileSettings? = null
 
@@ -259,9 +284,26 @@ class LocationForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val action = intent?.action ?: ACTION_START
         when (action) {
-            ACTION_START -> startLocationUpdates()
+            ACTION_START -> {
+                val authToken = intent?.getStringExtra(EXTRA_AUTH_TOKEN)
+                val userId = intent?.getStringExtra(EXTRA_USER_ID)
+                startLocationUpdates(authToken, userId)
+            }
             ACTION_STOP -> stopLocationUpdates()
             ACTION_HEARTBEAT -> handleHeartbeatAlarm()
+            ACTION_UPDATE_TOKEN -> {
+                val authToken = intent?.getStringExtra(EXTRA_AUTH_TOKEN)
+                val userId = intent?.getStringExtra(EXTRA_USER_ID)
+                if (authToken != null) {
+                    bearerToken = authToken
+                    if (userId != null) {
+                        currentUserId = userId
+                    }
+                    android.util.Log.d("LocationService", "Auth token updated via ACTION_UPDATE_TOKEN")
+                    // Also update SharedPreferences so subsequent reads get the fresh token
+                    updateTokenInSharedPreferences(authToken, userId)
+                }
+            }
         }
         return START_STICKY
     }
@@ -330,7 +372,7 @@ class LocationForegroundService : Service() {
             .build()
     }
 
-    private fun startLocationUpdates() {
+    private fun startLocationUpdates(authToken: String? = null, userId: String? = null) {
         isRunning = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
@@ -339,6 +381,19 @@ class LocationForegroundService : Service() {
         }
 
         acquireWakeLock()
+
+        // Use authToken/userId from JS bridge if provided (fresh from session)
+        if (!authToken.isNullOrEmpty()) {
+            bearerToken = authToken
+            android.util.Log.d("LocationService", "Auth token set from JS bridge")
+            // Also store in SharedPreferences for subsequent reads
+            updateTokenInSharedPreferences(authToken, userId)
+        }
+        if (!userId.isNullOrEmpty()) {
+            currentUserId = userId
+            android.util.Log.d("LocationService", "User ID set from JS bridge: $userId")
+        }
+
         loadUserSession()
         startHeartbeatTimer()
 
@@ -437,6 +492,14 @@ class LocationForegroundService : Service() {
     }
 
     private fun loadUserSession() {
+        // If authToken and userId were already set from JS bridge, skip SharedPreferences read
+        if (bearerToken != null && currentUserId != null) {
+            sessionLoadRetries = 0
+            android.util.Log.d("LocationService", "Using auth token from JS bridge, skipping SharedPreferences")
+            loadProfileSettings()
+            return
+        }
+
         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
         val accessToken = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
 
@@ -458,8 +521,16 @@ class LocationForegroundService : Service() {
         try {
             val tokenJson = JSONObject(accessToken)
             val userObj = tokenJson.optJSONObject("user")
-            currentUserId = userObj?.optString("id", null)
-            bearerToken = tokenJson.optString("access_token", null)
+            val storedUserId = userObj?.optString("id", null)
+            val storedAccessToken = tokenJson.optString("access_token", null)
+
+            // Only override if not already set from JS bridge
+            if (currentUserId == null) {
+                currentUserId = storedUserId
+            }
+            if (bearerToken == null) {
+                bearerToken = storedAccessToken
+            }
 
             if (currentUserId == null) {
                 bearerToken?.let { token ->
@@ -491,6 +562,50 @@ class LocationForegroundService : Service() {
             }
         } catch (e: Exception) {
             android.util.Log.e("LocationService", "Error parsing auth token: ${e.message}")
+        }
+    }
+
+    /**
+     * Update SharedPreferences with the fresh auth token from the JS bridge.
+     * This ensures subsequent reads (e.g. after service restart) get a valid token.
+     */
+    private fun updateTokenInSharedPreferences(authToken: String, userId: String? = null) {
+        try {
+            val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+            val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
+
+            if (storedJson != null) {
+                // Update the existing session JSON with the new access_token
+                val tokenJson = JSONObject(storedJson)
+                tokenJson.put("access_token", authToken)
+                if (userId != null) {
+                    val userObj = tokenJson.optJSONObject("user")
+                    if (userObj != null) {
+                        userObj.put("id", userId)
+                        tokenJson.put("user", userObj)
+                    }
+                }
+                prefs.edit()
+                    .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", tokenJson.toString())
+                    .apply()
+                android.util.Log.d("LocationService", "Updated SharedPreferences with fresh auth token")
+            } else {
+                // No existing session in SharedPreferences — create a minimal one
+                val newJson = JSONObject().apply {
+                    put("access_token", authToken)
+                    put("token_type", "bearer")
+                }
+                if (userId != null) {
+                    val userObj = JSONObject().apply { put("id", userId) }
+                    put("user", userObj)
+                }
+                prefs.edit()
+                    .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", newJson.toString())
+                    .apply()
+                android.util.Log.d("LocationService", "Created new session in SharedPreferences with auth token")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error updating SharedPreferences with auth token: ${e.message}")
         }
     }
 
@@ -955,8 +1070,16 @@ class LocationForegroundService : Service() {
     }
 
     private fun scheduleRestart() {
+        val currentToken = bearerToken
+        val currentUserId = currentUserId
         val restartIntent = Intent(applicationContext, LocationForegroundService::class.java).apply {
             action = ACTION_START
+            if (!currentToken.isNullOrEmpty()) {
+                putExtra(EXTRA_AUTH_TOKEN, currentToken)
+            }
+            if (!currentUserId.isNullOrEmpty()) {
+                putExtra(EXTRA_USER_ID, currentUserId)
+            }
         }
         // Use getForegroundService() for Android 8+ (API 26+) — required to start as foreground service
         val pendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {

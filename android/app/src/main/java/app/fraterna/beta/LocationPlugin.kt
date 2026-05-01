@@ -54,8 +54,11 @@ class LocationPlugin : Plugin() {
 
         requestBatteryOptimizationExemption(context)
 
+        val authToken = call.getString("authToken")
+        val userId = call.getString("userId")
+
         try {
-            LocationForegroundService.start(context)
+            LocationForegroundService.start(context, authToken, userId)
             call.resolve()
         } catch (e: Exception) {
             call.reject("Failed to start location service: ${e.message}")
@@ -130,6 +133,18 @@ class LocationPlugin : Plugin() {
     fun setBackgroundAccuracy(call: PluginCall) {
         LocationForegroundService.updateBackgroundMode(true)
         call.resolve()
+    }
+
+    @PluginMethod
+    fun updateAuthToken(call: PluginCall) {
+        val authToken = call.getString("authToken")
+        val userId = call.getString("userId")
+        if (authToken != null) {
+            LocationForegroundService.updateAuthToken(authToken, userId)
+            call.resolve()
+        } else {
+            call.reject("authToken is required")
+        }
     }
 
     @PermissionCallback

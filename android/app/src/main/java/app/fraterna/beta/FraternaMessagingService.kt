@@ -57,7 +57,7 @@ class FraternaMessagingService : FirebaseMessagingService() {
                 }
                 startService(heartbeatIntent)
             } else {
-                // Service was killed — restart it
+                // Service was killed — restart it (token will be read from SharedPreferences)
                 Log.d(TAG, "Keepalive: restarting location service")
                 LocationForegroundService.start(this)
             }

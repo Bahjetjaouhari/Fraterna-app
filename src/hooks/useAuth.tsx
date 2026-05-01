@@ -4,6 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { Preferences } from '@capacitor/preferences';
 import { App } from '@capacitor/app';
 import { supabase } from '@/integrations/supabase/client';
+import { LocationService } from '@/hooks/useLocationService';
 
 interface Profile {
   id: string;
@@ -78,7 +79,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Stop native location service on force logout
     if (Capacitor.isNativePlatform()) {
       try {
-        Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+        LocationService.stopLocationUpdates();
       } catch (e) {
         console.error('Failed to stop location service on force logout:', e);
       }
@@ -147,7 +148,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.access_token) {
           try {
-            Capacitor.nativeCallback('LocationService', 'startLocationUpdates', {
+            LocationService.startLocationUpdates({
               userId: userId,
               authToken: session.access_token
             });
@@ -235,7 +236,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     if (!Capacitor.isNativePlatform() || !profile) return;
     const enabled = profile.tracking_enabled && !profile.stealth_mode;
     try {
-      Capacitor.nativeCallback('LocationService', 'setTrackingEnabled', { enabled });
+      LocationService.setTrackingEnabled({ enabled });
     } catch (e) {
       console.error('Failed to sync tracking state to native:', e);
     }
@@ -274,6 +275,19 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           setTimeout(() => fetchProfile(session.user.id), 100);
           // Start heartbeat when user logs in
           startHeartbeat(session.user.id);
+
+          // Push fresh token to native service on every auth state change
+          // (especially TOKEN_REFRESHED) so native code always has a valid token
+          if (Capacitor.isNativePlatform() && session.access_token) {
+            try {
+              LocationService.updateAuthToken({
+                authToken: session.access_token,
+                userId: session.user.id
+              });
+            } catch (e) {
+              console.error('Failed to push fresh token to native service:', e);
+            }
+          }
         } else {
           setProfile(null);
           setRoles([]);
@@ -283,7 +297,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           // transiently have null sessions during token refresh cycles.
           if (event === 'SIGNED_OUT' && Capacitor.isNativePlatform()) {
             try {
-              Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+              LocationService.stopLocationUpdates();
             } catch (e) {
               console.error('Failed to stop location service on sign out:', e);
             }
@@ -398,7 +412,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Stop native location service (iOS + Android)
     if (Capacitor.isNativePlatform()) {
       try {
-        Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
+        LocationService.stopLocationUpdates();
       } catch (e) {
         console.error('Failed to stop native location service:', e);
       }
