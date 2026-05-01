@@ -594,10 +594,10 @@ class LocationForegroundService : Service() {
                 val newJson = JSONObject().apply {
                     put("access_token", authToken)
                     put("token_type", "bearer")
-                }
-                if (userId != null) {
-                    val userObj = JSONObject().apply { put("id", userId) }
-                    put("user", userObj)
+                    if (userId != null) {
+                        val userObj = JSONObject().apply { put("id", userId) }
+                        put("user", userObj)
+                    }
                 }
                 prefs.edit()
                     .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", newJson.toString())
