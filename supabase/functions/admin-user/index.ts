@@ -63,11 +63,12 @@ Deno.serve(async (req) => {
 
     const callerId = userData.user.id;
 
-    // Verifica que el que llama sea admin (user_roles.role='admin')
+    // Verifica que el que llama sea admin o ceo (user_roles)
     const { data: callerRole, error: callerRoleErr } = await adminClient
       .from("user_roles")
       .select("role")
       .eq("user_id", callerId)
+      .in("role", ["admin", "ceo"])
       .maybeSingle();
 
     if (callerRoleErr) {
@@ -77,8 +78,8 @@ Deno.serve(async (req) => {
       });
     }
 
-    if (callerRole?.role !== "admin") {
-      return json(req, 403, { error: "Forbidden: admin only" });
+    if (!callerRole) {
+      return json(req, 403, { error: "Forbidden: admin or ceo only" });
     }
 
     const body = (await req.json().catch(() => ({}))) as Body;

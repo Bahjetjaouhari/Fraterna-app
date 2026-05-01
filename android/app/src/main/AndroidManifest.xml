@@ -72,6 +72,16 @@
                 <action android:name="android.intent.action.QUICKBOOT_POWERON" />
             </intent-filter>
         </receiver>
+
+        <!-- Heartbeat Alarm Receiver - fires every 90s via AlarmManager to survive Doze -->
+        <receiver
+            android:name=".HeartbeatAlarmReceiver"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="app.fraterna.beta.action.HEARTBEAT_ALARM" />
+            </intent-filter>
+        </receiver>
     </application>
 
     <!-- Permissions -->

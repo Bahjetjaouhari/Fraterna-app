@@ -142,8 +142,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearInterval(heartbeatIntervalRef.current);
     }
 
-    // Start native iOS location service
-    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+    // Start native location service on both iOS and Android
+    if (Capacitor.isNativePlatform()) {
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.access_token) {
           try {
@@ -152,7 +152,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               authToken: session.access_token
             });
           } catch (e) {
-            console.error('Failed to start iOS location service:', e);
+            console.error('Failed to start native location service:', e);
           }
         }
       });
@@ -230,14 +230,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Sync tracking/stealth settings to native iOS location service
+  // Sync tracking/stealth settings to native location service (iOS + Android)
   useEffect(() => {
-    if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== 'ios' || !profile) return;
+    if (!Capacitor.isNativePlatform() || !profile) return;
     const enabled = profile.tracking_enabled && !profile.stealth_mode;
     try {
       Capacitor.nativeCallback('LocationService', 'setTrackingEnabled', { enabled });
     } catch (e) {
-      console.error('Failed to sync tracking state to iOS:', e);
+      console.error('Failed to sync tracking state to native:', e);
     }
   }, [profile?.tracking_enabled, profile?.stealth_mode]);
 
@@ -395,12 +395,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // Stop heartbeat and clear session data
     stopHeartbeat();
 
-    // Stop native iOS location service
-    if (Capacitor.isNativePlatform() && Capacitor.getPlatform() === 'ios') {
+    // Stop native location service (iOS + Android)
+    if (Capacitor.isNativePlatform()) {
       try {
         Capacitor.nativeCallback('LocationService', 'stopLocationUpdates', {});
       } catch (e) {
-        console.error('Failed to stop iOS location service:', e);
+        console.error('Failed to stop native location service:', e);
       }
     }
 

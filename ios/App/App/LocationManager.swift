@@ -12,6 +12,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var authToken: String?
     private var proximityCooldowns: [String: Date] = [:]
     private var trackingEnabled: Bool = true
+    private var stealthMode: Bool = false
     private var proximityRadiusKm: Double = 5.0
     private var proximityAlertsEnabled: Bool = true
     private var heartbeatTimer: DispatchSourceTimer?
@@ -239,12 +240,31 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 return
             }
 
-            self.sendHeartbeat(userId: userId, authToken: currentToken)
-            self.updateLocation(userId: userId, authToken: currentToken, location: location)
-            self.checkProximityAlerts(userId: userId, authToken: currentToken, location: location)
+            // Use DispatchGroup to wait for ALL network calls to complete
+            // before ending the background task. Without this, iOS can suspend
+            // the app before URLSession requests finish, causing heartbeats
+            // to never reach the server.
+            let group = DispatchGroup()
 
-            // End background task after all network calls are dispatched
-            self.endBackgroundTask(bgTaskId)
+            group.enter()
+            self.sendHeartbeat(userId: userId, authToken: currentToken) {
+                group.leave()
+            }
+
+            group.enter()
+            self.updateLocation(userId: userId, authToken: currentToken, location: location) {
+                group.leave()
+            }
+
+            group.enter()
+            self.checkProximityAlerts(userId: userId, authToken: currentToken, location: location) {
+                group.leave()
+            }
+
+            // End background task only after all network calls complete
+            group.notify(queue: .global(qos: .utility)) {
+                self.endBackgroundTask(bgTaskId)
+            }
         }
     }
 
@@ -464,7 +484,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     guard let profiles = try JSONSerialization.jsonObject(with: data) as? [[String: Any]],
                           let profile = profiles.first else { return }
 
-                    // Update tracking/stealth settings from server
+                    // Update tracking settings from server
                     if let tracking = profile["tracking_enabled"] as? Bool {
                         self.trackingEnabled = tracking
                         if tracking {
@@ -477,12 +497,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                             self.stopHeartbeatTimer()
                         }
                     }
-                    if let stealth = profile["stealth_mode"] as? Bool, stealth {
-                        // Stealth mode = don't upload location, but still send heartbeats
-                        // so the user appears online but location doesn't update
-                        self.trackingEnabled = false
-                        self.locationManager.stopUpdatingLocation()
-                        self.stopHeartbeatTimer()
+                    // Stealth mode: hide location from other users but KEEP heartbeats running.
+                    // This matches the Android behavior where stealth mode only skips
+                    // updateLocationInSupabase() but sendHeartbeat() always fires.
+                    // The user should appear "online" even in stealth mode — they just
+                    // won't show their position on the map.
+                    // NOTE: We do NOT stop locationManager or heartbeatTimer here.
+                    // The stealth flag is checked in updateLocation() to skip the upload.
+                    if let stealth = profile["stealth_mode"] as? Bool {
+                        self.stealthMode = stealth
+                        print("[LocationManager] Stealth mode: \(stealth) — heartbeats continue regardless")
                     }
                     if let radius = profile["proximity_radius_km"] as? Double {
                         self.proximityRadiusKm = radius
@@ -499,11 +523,18 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     // MARK: - Heartbeat
 
+    /// Convenience overload without completion handler (used by heartbeat timer and sendHeartbeatNow)
     private func sendHeartbeat(userId: String, authToken: String) {
+        sendHeartbeat(userId: userId, authToken: authToken, completion: nil)
+    }
+
+    /// Send heartbeat with optional completion handler for DispatchGroup coordination
+    private func sendHeartbeat(userId: String, authToken: String, completion: (() -> Void)?) {
         // Throttle: don't send more than once per 30 seconds
         let now = Date()
         guard now.timeIntervalSince(lastHeartbeatTime) >= 30 else {
             print("[LocationManager] Heartbeat throttled (sent \(Int(now.timeIntervalSince(lastHeartbeatTime)))s ago)")
+            completion?()
             return
         }
         lastHeartbeatTime = now
@@ -541,14 +572,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     }
                 }
             }
+            completion?()
         }.resume()
     }
 
     // MARK: - Location Update
 
-    private func updateLocation(userId: String, authToken: String, location: CLLocation) {
+    private func updateLocation(userId: String, authToken: String, location: CLLocation, completion: (() -> Void)? = nil) {
         // Check privacy flags — if stealth mode or tracking disabled, skip upload
         // but still allow heartbeats to keep the user "online" if they want to appear online
+        if stealthMode || !trackingEnabled {
+            print("[LocationManager] Skipping location upload: stealth=\(stealthMode), tracking=\(trackingEnabled)")
+            completion?()
+            return
+        }
 
         let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id")!
         var request = URLRequest(url: url)
@@ -579,13 +616,17 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     print("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
                 }
             }
+            completion?()
         }.resume()
     }
 
     // MARK: - Proximity Alerts
 
-    private func checkProximityAlerts(userId: String, authToken: String, location: CLLocation) {
-        guard proximityAlertsEnabled else { return }
+    private func checkProximityAlerts(userId: String, authToken: String, location: CLLocation, completion: (() -> Void)? = nil) {
+        guard proximityAlertsEnabled else {
+            completion?()
+            return
+        }
 
         let lat = location.coordinate.latitude
         let lng = location.coordinate.longitude
@@ -593,25 +634,35 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         let urlString = "\(supabaseUrl)/rest/v1/locations?select=user_id,lat,lng,profile:profiles!locations_user_id_fkey(id,full_name,tracking_enabled,stealth_mode,last_heartbeat_at,proximity_alerts_enabled,proximity_radius_km)&lat=not.is.null&lng=not.is.null&user_id=neq.\(userId)&lat=gt.\(lat - radius)&lat=lt.\(lat + radius)&lng=gt.\(lng - radius)&lng=lt.\(lng + radius)"
 
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString) else {
+            completion?()
+            return
+        }
         var request = URLRequest(url: url)
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self, let data = data, error == nil else { return }
+            guard let self = self, let data = data, error == nil else {
+                completion?()
+                return
+            }
 
             // Also refresh profile settings periodically
             self.loadProfileSettings()
 
             do {
-                guard let locationEntries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else { return }
+                guard let locationEntries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    completion?()
+                    return
+                }
                 for entry in locationEntries {
                     self.processProximityAlert(myLocation: location, entry: entry)
                 }
             } catch {
                 print("[LocationManager] Proximity parse error: \(error)")
             }
+            completion?()
         }.resume()
     }
 
@@ -633,8 +684,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         guard let heartbeatDate = formatter.date(from: lastHeartbeat) else { return }
-        let threeMinAgo = Date().addingTimeInterval(-180)
-        guard heartbeatDate > threeMinAgo else { return }
+        let fiveMinAgo = Date().addingTimeInterval(-300) // Match 5-minute threshold
+        guard heartbeatDate > fiveMinAgo else { return }
 
         let theirLocation = CLLocation(latitude: theirLat, longitude: theirLng)
         let distance = myLocation.distance(from: theirLocation) / 1000.0

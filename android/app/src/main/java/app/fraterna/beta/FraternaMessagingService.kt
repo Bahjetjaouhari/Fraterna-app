@@ -47,6 +47,23 @@ class FraternaMessagingService : FirebaseMessagingService() {
         Log.d(TAG, "MessageType: ${remoteMessage.messageType}")
         Log.d(TAG, "Data: ${remoteMessage.data}")
 
+        // Handle keepalive silent push — wake heartbeat, don't show notification
+        if (remoteMessage.data["type"] == "keepalive") {
+            Log.d(TAG, "Keepalive push received — triggering heartbeat")
+            if (LocationForegroundService.isServiceRunning()) {
+                // Service is alive — tell it to send heartbeat now
+                val heartbeatIntent = Intent(this, LocationForegroundService::class.java).apply {
+                    action = LocationForegroundService.ACTION_HEARTBEAT
+                }
+                startService(heartbeatIntent)
+            } else {
+                // Service was killed — restart it
+                Log.d(TAG, "Keepalive: restarting location service")
+                LocationForegroundService.start(this)
+            }
+            return // Don't show notification for keepalive
+        }
+
         // Check if message contains notification payload
         remoteMessage.notification?.let {
             Log.d(TAG, "Notification Title: ${it.title}")

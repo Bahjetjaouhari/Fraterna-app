@@ -22,10 +22,8 @@ import androidx.lifecycle.ProcessLifecycleOwner
 import com.google.android.gms.location.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -46,7 +44,69 @@ class LocationForegroundService : Service() {
         const val NOTIFICATION_ID = 1001
         const val ACTION_START = "app.fraterna.beta.action.START_LOCATION"
         const val ACTION_STOP = "app.fraterna.beta.action.STOP_LOCATION"
-        const val ONLINE_THRESHOLD_SECONDS = 180L // Must match is_user_active() SQL function
+        const val ACTION_HEARTBEAT = "app.fraterna.beta.action.HEARTBEAT_ALARM"
+        const val ONLINE_THRESHOLD_SECONDS = 300L // Must match is_user_active() SQL function (5 minutes)
+        private const val HEARTBEAT_ALARM_INTERVAL_MS = 90_000L // 90 seconds
+        private const val HEARTBEAT_ALARM_REQUEST_CODE = 9001
+
+        /**
+         * Schedule the next heartbeat alarm using AlarmManager.
+         * Uses setExactAndAllowWhileIdle() which fires even in Doze mode.
+         * Called from HeartbeatAlarmReceiver after each heartbeat completes.
+         */
+        fun scheduleNextHeartbeatAlarm(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, HeartbeatAlarmReceiver::class.java).apply {
+                action = HeartbeatAlarmReceiver.ACTION_HEARTBEAT
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                HEARTBEAT_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val triggerAt = System.currentTimeMillis() + HEARTBEAT_ALARM_INTERVAL_MS
+
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    alarmManager.setExactAndAllowWhileIdle(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                } else {
+                    alarmManager.setExact(
+                        AlarmManager.RTC_WAKEUP,
+                        triggerAt,
+                        pendingIntent
+                    )
+                }
+                android.util.Log.d("LocationService", "Next heartbeat alarm scheduled in ${HEARTBEAT_ALARM_INTERVAL_MS / 1000}s")
+            } catch (e: SecurityException) {
+                android.util.Log.e("LocationService", "Cannot schedule exact alarm: ${e.message}")
+                // Fallback: use inexact alarm (may be delayed by Doze but still fires)
+                alarmManager.set(AlarmManager.RTC_WAKEUP, triggerAt, pendingIntent)
+            }
+        }
+
+        /**
+         * Cancel any pending heartbeat alarm.
+         */
+        fun cancelHeartbeatAlarm(context: Context) {
+            val alarmManager = context.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            val intent = Intent(context, HeartbeatAlarmReceiver::class.java).apply {
+                action = HeartbeatAlarmReceiver.ACTION_HEARTBEAT
+            }
+            val pendingIntent = PendingIntent.getBroadcast(
+                context,
+                HEARTBEAT_ALARM_REQUEST_CODE,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+            alarmManager.cancel(pendingIntent)
+            android.util.Log.d("LocationService", "Heartbeat alarm cancelled")
+        }
 
         @Volatile
         private var isRunning = false
@@ -90,7 +150,7 @@ class LocationForegroundService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var fusedLocationClient: FusedLocationProviderClient? = null
     private var locationCallback: LocationCallback? = null
-    private var heartbeatTimerJob: Job? = null
+    // heartbeatTimerJob removed — now using AlarmManager via HeartbeatAlarmReceiver
 
     // OkHttpClient with proper timeouts to prevent hangs on poor connectivity
     private val httpClient = OkHttpClient.Builder()
@@ -201,8 +261,26 @@ class LocationForegroundService : Service() {
         when (action) {
             ACTION_START -> startLocationUpdates()
             ACTION_STOP -> stopLocationUpdates()
+            ACTION_HEARTBEAT -> handleHeartbeatAlarm()
         }
         return START_STICKY
+    }
+
+    /**
+     * Called by HeartbeatAlarmReceiver via startService(ACTION_HEARTBEAT).
+     * Runs the heartbeat in a coroutine so the service stays alive during the network call.
+     */
+    private fun handleHeartbeatAlarm() {
+        if (!isRunning) return
+        serviceScope.launch {
+            try {
+                refreshToken()
+                sendHeartbeat()
+                loadProfileSettings()
+            } catch (e: Exception) {
+                android.util.Log.e("LocationService", "Heartbeat alarm handler error: ${e.message}")
+            }
+        }
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -344,33 +422,18 @@ class LocationForegroundService : Service() {
     }
 
     /**
-     * Independent heartbeat timer — fires every 90 seconds regardless of location updates.
-     * This ensures the user stays "online" even when FusedLocationProvider throttles
-     * updates (Doze mode, stationary user, GPS signal loss).
-     * Matches the iOS LocationManager heartbeatTimer behavior.
+     * Start heartbeat using AlarmManager (survives Doze mode).
+     * Uses setExactAndAllowWhileIdle() which fires even when the CPU is sleeping.
+     * This replaces the previous coroutine delay() which was killed by Doze.
      */
     private fun startHeartbeatTimer() {
         stopHeartbeatTimer()
-        heartbeatTimerJob = serviceScope.launch {
-            while (true) {
-                delay(90_000L) // 90 seconds
-                if (!isRunning) break
-                try {
-                    refreshToken()
-                    sendHeartbeat()
-                    // Refresh profile settings periodically (overrides 5-min TTL)
-                    loadProfileSettings()
-                } catch (e: Exception) {
-                    android.util.Log.e("LocationService", "Heartbeat timer error: ${e.message}")
-                }
-            }
-        }
-        android.util.Log.d("LocationService", "Heartbeat timer started (90s interval)")
+        scheduleNextHeartbeatAlarm(this)
+        android.util.Log.d("LocationService", "Heartbeat AlarmManager started (90s interval, Doze-safe)")
     }
 
     private fun stopHeartbeatTimer() {
-        heartbeatTimerJob?.cancel()
-        heartbeatTimerJob = null
+        cancelHeartbeatAlarm(this)
     }
 
     private fun loadUserSession() {

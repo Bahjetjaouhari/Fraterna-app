@@ -8,7 +8,7 @@ android {
         applicationId "app.fraterna.beta"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 43
+        versionCode 46
         versionName "3.19"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
