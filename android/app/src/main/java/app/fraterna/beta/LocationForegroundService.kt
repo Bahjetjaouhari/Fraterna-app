@@ -249,7 +249,13 @@ class LocationForegroundService : Service() {
 
     // Supabase config from BuildConfig (injected at build time from local.properties)
     private val supabaseUrl = "https://vzlbvknauwvrqwpvtaqe.supabase.co"
-    private val supabaseAnonKey = BuildConfig.SUPABASE_ANON_KEY
+    // Hardcoded fallback — the anon key is public (used in browser JS), not a secret
+    private val supabaseAnonKey = if (BuildConfig.SUPABASE_ANON_KEY.isNullOrEmpty()) {
+        android.util.Log.e("LocationService", "⚠️ BuildConfig.SUPABASE_ANON_KEY is EMPTY — using hardcoded fallback")
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bGJ2a25hdXd2cnF3cHZ0YXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4NzUwODUsImV4cCI6MjA4NDQ1MTA4NX0.XlPQBEKzv-RxOnTD1pbS-5A_J5xavLqwpWH9IAC5kOw"
+    } else {
+        BuildConfig.SUPABASE_ANON_KEY
+    }
 
     data class ProfileSettings(
         val proximityRadiusKm: Double = 5.0,
@@ -404,20 +410,10 @@ class LocationForegroundService : Service() {
     }
 
     private fun startLocationUpdates(authToken: String? = null, userId: String? = null) {
-        isRunning = true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
-            startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
-        } else {
-            startForeground(NOTIFICATION_ID, createNotification())
-        }
-
-        acquireWakeLock()
-
-        // Use authToken/userId from JS bridge if provided (fresh from session)
+        // Update token/userId if provided, even if already running
         if (!authToken.isNullOrEmpty()) {
             bearerToken = authToken
             android.util.Log.d("LocationService", "Auth token set from JS bridge")
-            // Also store in SharedPreferences for subsequent reads
             updateTokenInSharedPreferences(authToken, userId)
         }
         if (!userId.isNullOrEmpty()) {
@@ -425,6 +421,20 @@ class LocationForegroundService : Service() {
             android.util.Log.d("LocationService", "User ID set from JS bridge: $userId")
         }
 
+        // If already running, just update the token — don't re-acquire WakeLock or re-register location updates
+        if (isRunning) {
+            android.util.Log.d("LocationService", "Service already running, token updated (skipping re-init)")
+            return
+        }
+        isRunning = true
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            startForeground(NOTIFICATION_ID, createNotification(), android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION)
+        } else {
+            startForeground(NOTIFICATION_ID, createNotification())
+        }
+
+        acquireWakeLock()
         loadUserSession()
         startHeartbeatTimer()
 
