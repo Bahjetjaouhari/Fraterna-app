@@ -314,11 +314,25 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     // The JS bridge does NOT call setForegroundAccuracy/setBackgroundAccuracy
     // here to avoid race conditions with the native observers.
     const setupAppStateListener = async () => {
-      const appStateListener = await App.addListener('appStateChange', (state: { isActive: boolean }) => {
+      const appStateListener = await App.addListener('appStateChange', async (state: { isActive: boolean }) => {
         if (state.isActive && user?.id) {
-          // App came to foreground - send heartbeat and refresh data
+          // App came to foreground - send heartbeat and push fresh token to native service
           sendHeartbeat(user.id);
           window.dispatchEvent(new CustomEvent('app-resume'));
+          // Push fresh auth token to native service (may have been refreshed while app was in background)
+          if (Capacitor.isNativePlatform()) {
+            const { data: { session: currentSession } } = await supabase.auth.getSession();
+            if (currentSession?.access_token) {
+              try {
+                LocationService.updateAuthToken({
+                  authToken: currentSession.access_token,
+                  userId: currentSession.user.id
+                });
+              } catch (e) {
+                console.error('Failed to push fresh token on app resume:', e);
+              }
+            }
+          }
         }
       });
       return appStateListener;

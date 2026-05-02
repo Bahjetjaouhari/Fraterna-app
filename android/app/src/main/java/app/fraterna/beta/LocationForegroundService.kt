@@ -610,7 +610,10 @@ class LocationForegroundService : Service() {
     }
 
     /**
-     * Token refresh with 30s throttle to avoid redundant calls.
+     * Check SharedPreferences for a newer token (written by JS client).
+     * Does NOT attempt Supabase token refresh — the refresh_token in SharedPreferences
+     * is always stale because the JS client already used it for its own refresh.
+     * Fresh tokens come from the JS bridge via updateAuthToken() / onAuthStateChange.
      */
     private fun refreshToken() {
         val now = System.currentTimeMillis()
@@ -622,98 +625,18 @@ class LocationForegroundService : Service() {
 
         try {
             val tokenJson = JSONObject(storedJson)
-
-            // Check if JS client already refreshed the token in storage
             val storedAccessToken = tokenJson.optString("access_token", null)
             if (storedAccessToken != null && storedAccessToken != bearerToken) {
                 bearerToken = storedAccessToken
                 android.util.Log.d("LocationService", "Token updated from storage (JS client refreshed)")
             }
-
-            if (bearerToken != null && isTokenExpiringSoon(bearerToken!!, 300)) {
-                android.util.Log.d("LocationService", "Token expiring soon, refreshing via Supabase...")
-                val refreshToken = tokenJson.optString("refresh_token", null)
-                if (refreshToken != null) {
-                    performTokenRefresh(refreshToken, prefs)
-                } else {
-                    android.util.Log.e("LocationService", "No refresh_token found in stored session")
-                }
-            }
+            // No Supabase refresh attempt — the refresh_token is always stale
         } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Error in refreshToken: ${e.message}")
+            android.util.Log.e("LocationService", "Error checking stored token: ${e.message}")
         }
     }
 
-    private fun isTokenExpiringSoon(token: String, thresholdSeconds: Long): Boolean {
-        try {
-            val parts = token.split(".")
-            if (parts.size != 3) return true
 
-            val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
-            val payloadJson = JSONObject(payload)
-            val exp = payloadJson.optLong("exp", 0)
-            if (exp == 0L) return true
-
-            val nowSeconds = System.currentTimeMillis() / 1000
-            return (exp - nowSeconds) < thresholdSeconds
-        } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Error decoding JWT: ${e.message}")
-            return true
-        }
-    }
-
-    private fun performTokenRefresh(refreshToken: String, prefs: android.content.SharedPreferences) {
-        try {
-            val body = JSONObject().apply { put("refresh_token", refreshToken) }
-            val requestBody = body.toString().toRequestBody("application/json".toMediaType())
-
-            val request = Request.Builder()
-                .url("$supabaseUrl/auth/v1/token?grant_type=refresh_token")
-                .addHeader("apikey", supabaseAnonKey)
-                .addHeader("Content-Type", "application/json")
-                .post(requestBody)
-                .build()
-
-            val response = httpClient.newCall(request).execute()
-            val responseBody = response.body?.string()
-
-            if (response.isSuccessful && responseBody != null) {
-                val newSession = JSONObject(responseBody)
-                val newAccessToken = newSession.optString("access_token", null)
-
-                if (newAccessToken != null) {
-                    bearerToken = newAccessToken
-                    android.util.Log.d("LocationService", "Token refreshed successfully via Supabase")
-
-                    val userObj = newSession.optJSONObject("user")
-                    if (userObj != null) {
-                        currentUserId = userObj.optString("id", currentUserId)
-                    }
-
-                    val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
-                    if (storedJson != null) {
-                        val storedSession = JSONObject(storedJson)
-                        storedSession.put("access_token", newAccessToken)
-                        storedSession.put("refresh_token", newSession.optString("refresh_token", null))
-                        storedSession.put("expires_at", newSession.optLong("expires_at", 0))
-                        storedSession.put("expires_in", newSession.optInt("expires_in", 3600))
-                        storedSession.put("token_type", "bearer")
-
-                        prefs.edit()
-                            .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", storedSession.toString())
-                            .apply()
-                    }
-                }
-            } else {
-                android.util.Log.e("LocationService", "Token refresh failed: ${response.code}")
-                if (response.code == 400 || response.code == 401) {
-                    android.util.Log.e("LocationService", "Refresh token is invalid. User needs to re-login.")
-                }
-            }
-        } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Token refresh network error: ${e.message}")
-        }
-    }
 
     /**
      * Load profile settings including privacy flags.
@@ -816,15 +739,19 @@ class LocationForegroundService : Service() {
                 } else {
                     android.util.Log.e("LocationService", "Heartbeat failed: ${response.code}")
                     if (response.code == 401) {
-                        android.util.Log.w("LocationService", "Got 401, forcing token refresh...")
+                        android.util.Log.w("LocationService", "Got 401, checking SharedPreferences for newer token...")
                         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
                         val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
                         if (storedJson != null) {
-                            val tokenJson = JSONObject(storedJson)
-                            val rt = tokenJson.optString("refresh_token", null)
-                            if (rt != null) {
-                                lastTokenRefreshMs = 0 // Force refresh past throttle
-                                performTokenRefresh(rt, prefs)
+                            try {
+                                val tokenJson = JSONObject(storedJson)
+                                val storedAccessToken = tokenJson.optString("access_token", null)
+                                if (storedAccessToken != null && storedAccessToken != bearerToken) {
+                                    bearerToken = storedAccessToken
+                                    android.util.Log.d("LocationService", "Token updated from storage after 401")
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("LocationService", "Error reading stored token after 401: ${e.message}")
                             }
                         }
                     }
@@ -882,15 +809,19 @@ class LocationForegroundService : Service() {
                 } else {
                     android.util.Log.e("LocationService", "Location update failed: ${response.code}")
                     if (response.code == 401) {
-                        android.util.Log.w("LocationService", "Got 401 on location update, forcing token refresh...")
+                        android.util.Log.w("LocationService", "Got 401 on location update, checking SharedPreferences for newer token...")
                         val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
                         val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
                         if (storedJson != null) {
-                            val tokenJson = JSONObject(storedJson)
-                            val rt = tokenJson.optString("refresh_token", null)
-                            if (rt != null) {
-                                lastTokenRefreshMs = 0
-                                performTokenRefresh(rt, prefs)
+                            try {
+                                val tokenJson = JSONObject(storedJson)
+                                val storedAccessToken = tokenJson.optString("access_token", null)
+                                if (storedAccessToken != null && storedAccessToken != bearerToken) {
+                                    bearerToken = storedAccessToken
+                                    android.util.Log.d("LocationService", "Token updated from storage after 401 on location update")
+                                }
+                            } catch (e: Exception) {
+                                android.util.Log.e("LocationService", "Error reading stored token after 401: ${e.message}")
                             }
                         }
                     }
