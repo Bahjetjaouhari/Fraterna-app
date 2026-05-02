@@ -117,7 +117,39 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if let userId = userId {
             self.userId = userId
         }
-        print("[LocationManager] Auth token updated from JS bridge")
+        // Persist to UserDefaults so subsequent reads and 401 recovery find the fresh token
+        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+        if let jsonString = UserDefaults.standard.string(forKey: key),
+           let jsonData = jsonString.data(using: .utf8),
+           var storedSession = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+            storedSession["access_token"] = authToken
+            if let userId = userId,
+               var userObj = storedSession["user"] as? [String: Any] {
+                userObj["id"] = userId
+                storedSession["user"] = userObj
+            }
+            if let updatedData = try? JSONSerialization.data(withJSONObject: storedSession),
+               let updatedString = String(data: updatedData, encoding: .utf8) {
+                UserDefaults.standard.set(updatedString, forKey: key)
+            }
+        }
+        print("[LocationManager] Auth token updated from JS bridge (persisted)")
+    }
+
+    /// Read UserDefaults for a newer access_token than the current authToken.
+    /// Returns true if the token was updated.
+    private func updateTokenFromStorage() -> Bool {
+        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+        guard let jsonString = UserDefaults.standard.string(forKey: key),
+              let jsonData = jsonString.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
+              let storedAccessToken = json["access_token"] as? String,
+              storedAccessToken != authToken else {
+            return false
+        }
+        authToken = storedAccessToken
+        print("[LocationManager] Token updated from storage")
+        return true
     }
 
     func setTrackingEnabled(_ enabled: Bool) {
@@ -462,15 +494,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
-                        print("[LocationManager] Got 401, checking UserDefaults for newer token...")
-                        let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
-                        if let jsonString = UserDefaults.standard.string(forKey: key),
-                           let jsonData = jsonString.data(using: .utf8),
-                           let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                           let storedAccessToken = json["access_token"] as? String,
-                           storedAccessToken != self?.authToken {
-                            self?.authToken = storedAccessToken
-                            print("[LocationManager] Token updated from storage after 401")
+                        print("[LocationManager] Got 401, waiting 2s for JS bridge to push fresh token...")
+                        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 2.0) { [weak self] in
+                            guard let self = self else { return }
+                            if self.updateTokenFromStorage() {
+                                // Retry once with the new token
+                                self.sendHeartbeat(userId: userId, authToken: self.authToken ?? authToken)
+                            } else {
+                                print("[LocationManager] No newer token found after 401, next cycle will retry")
+                            }
                         }
                     }
                 }

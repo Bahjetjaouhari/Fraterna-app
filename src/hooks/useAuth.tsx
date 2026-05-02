@@ -69,6 +69,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [isForcingLogin, setIsForcingLogin] = useState(false);
   const heartbeatIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const isSendingHeartbeatRef = useRef(false);
+  const nativeServiceStartedRef = useRef(false);
 
   const forceLogoutBannedUser = async () => {
     await supabase.auth.signOut();
@@ -143,8 +144,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearInterval(heartbeatIntervalRef.current);
     }
 
-    // Start native location service on both iOS and Android
-    if (Capacitor.isNativePlatform()) {
+    // Start native location service only ONCE (not on every token refresh)
+    if (!nativeServiceStartedRef.current && Capacitor.isNativePlatform()) {
+      nativeServiceStartedRef.current = true;
       supabase.auth.getSession().then(({ data: { session } }) => {
         if (session?.access_token) {
           try {
@@ -154,6 +156,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             });
           } catch (e) {
             console.error('Failed to start native location service:', e);
+            nativeServiceStartedRef.current = false;
           }
         }
       });
@@ -171,6 +174,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       clearInterval(heartbeatIntervalRef.current);
       heartbeatIntervalRef.current = null;
     }
+    nativeServiceStartedRef.current = false;
   };
 
   const fetchProfile = async (userId: string) => {

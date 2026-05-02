@@ -123,6 +123,10 @@ class LocationForegroundService : Service() {
         var bearerToken: String? = null
             internal set
 
+        // Application context for writing to SharedPreferences from static methods
+        @Volatile
+        private var appContext: Context? = null
+
         // JS bridge can update these from the webview
         @Volatile
         var trackingEnabledFromJS: Boolean = true
@@ -133,6 +137,7 @@ class LocationForegroundService : Service() {
         fun isServiceRunning(): Boolean = isRunning
 
         fun start(context: Context, authToken: String? = null, userId: String? = null) {
+            appContext = context.applicationContext
             val intent = Intent(context, LocationForegroundService::class.java).apply {
                 action = ACTION_START
                 authToken?.let { putExtra(EXTRA_AUTH_TOKEN, it) }
@@ -165,7 +170,28 @@ class LocationForegroundService : Service() {
             if (userId != null) {
                 currentUserId = userId
             }
-            android.util.Log.d("LocationService", "Auth token updated from JS bridge")
+            // Persist to SharedPreferences so subsequent reads and 401 recovery find the fresh token
+            appContext?.let { ctx ->
+                try {
+                    val prefs = ctx.getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+                    val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
+                    if (storedJson != null) {
+                        val tokenJson = org.json.JSONObject(storedJson)
+                        tokenJson.put("access_token", authToken)
+                        if (userId != null) {
+                            val userObj = tokenJson.optJSONObject("user")
+                            if (userObj != null) {
+                                userObj.put("id", userId)
+                                tokenJson.put("user", userObj)
+                            }
+                        }
+                        prefs.edit().putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", tokenJson.toString()).apply()
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("LocationService", "Error persisting token to SharedPreferences: ${e.message}")
+                }
+            }
+            android.util.Log.d("LocationService", "Auth token updated from JS bridge (persisted)")
         }
     }
 
@@ -232,6 +258,7 @@ class LocationForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        appContext = applicationContext
         createNotificationChannels()
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
@@ -248,6 +275,10 @@ class LocationForegroundService : Service() {
             fun onAppForegrounded() {
                 android.util.Log.d("LocationService", "App moved to foreground — switching to high accuracy")
                 backgroundMode = false
+                // Reset token refresh throttle and check SharedPreferences for fresh token
+                // (JS client may have refreshed token while we were in background)
+                lastTokenRefreshMs = 0
+                refreshToken()
                 restartLocationRequest()
             }
         })
@@ -619,21 +650,7 @@ class LocationForegroundService : Service() {
         val now = System.currentTimeMillis()
         if (now - lastTokenRefreshMs < TOKEN_REFRESH_THROTTLE_MS) return
         lastTokenRefreshMs = now
-
-        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
-        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
-
-        try {
-            val tokenJson = JSONObject(storedJson)
-            val storedAccessToken = tokenJson.optString("access_token", null)
-            if (storedAccessToken != null && storedAccessToken != bearerToken) {
-                bearerToken = storedAccessToken
-                android.util.Log.d("LocationService", "Token updated from storage (JS client refreshed)")
-            }
-            // No Supabase refresh attempt — the refresh_token is always stale
-        } catch (e: Exception) {
-            android.util.Log.e("LocationService", "Error checking stored token: ${e.message}")
-        }
+        updateTokenFromStorage()
     }
 
 
@@ -736,30 +753,57 @@ class LocationForegroundService : Service() {
                 val response = httpClient.newCall(request).execute()
                 if (response.isSuccessful) {
                     android.util.Log.d("LocationService", "Heartbeat sent successfully")
+                } else if (response.code == 401) {
+                    android.util.Log.w("LocationService", "Got 401 on heartbeat, waiting 2s for JS bridge to push fresh token...")
+                    kotlinx.coroutines.delay(2000)
+                    if (updateTokenFromStorage()) {
+                        // Retry once with the new token
+                        val retryToken = bearerToken ?: return@launch
+                        val retryRequest = Request.Builder()
+                            .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId")
+                            .addHeader("Authorization", "Bearer $retryToken")
+                            .addHeader("apikey", supabaseAnonKey)
+                            .addHeader("Content-Type", "application/json")
+                            .addHeader("Prefer", "return=minimal")
+                            .patch(requestBody)
+                            .build()
+                        val retryResponse = httpClient.newCall(retryRequest).execute()
+                        if (retryResponse.isSuccessful) {
+                            android.util.Log.d("LocationService", "Heartbeat sent successfully (retry after 401)")
+                        } else {
+                            android.util.Log.e("LocationService", "Heartbeat retry failed: ${retryResponse.code}")
+                        }
+                    } else {
+                        android.util.Log.w("LocationService", "No newer token found after 401, next cycle will retry")
+                    }
                 } else {
                     android.util.Log.e("LocationService", "Heartbeat failed: ${response.code}")
-                    if (response.code == 401) {
-                        android.util.Log.w("LocationService", "Got 401, checking SharedPreferences for newer token...")
-                        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
-                        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
-                        if (storedJson != null) {
-                            try {
-                                val tokenJson = JSONObject(storedJson)
-                                val storedAccessToken = tokenJson.optString("access_token", null)
-                                if (storedAccessToken != null && storedAccessToken != bearerToken) {
-                                    bearerToken = storedAccessToken
-                                    android.util.Log.d("LocationService", "Token updated from storage after 401")
-                                }
-                            } catch (e: Exception) {
-                                android.util.Log.e("LocationService", "Error reading stored token after 401: ${e.message}")
-                            }
-                        }
-                    }
                 }
             } catch (e: Exception) {
                 android.util.Log.e("LocationService", "Heartbeat error: ${e.message}")
             }
         }
+    }
+
+    /**
+     * Read SharedPreferences for a newer access_token than the current bearerToken.
+     * Returns true if the token was updated.
+     */
+    private fun updateTokenFromStorage(): Boolean {
+        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return false
+        try {
+            val tokenJson = JSONObject(storedJson)
+            val storedAccessToken = tokenJson.optString("access_token", null)
+            if (storedAccessToken != null && storedAccessToken != bearerToken) {
+                bearerToken = storedAccessToken
+                android.util.Log.d("LocationService", "Token updated from storage")
+                return true
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error reading stored token: ${e.message}")
+        }
+        return false
     }
 
     /**
@@ -806,25 +850,28 @@ class LocationForegroundService : Service() {
                 val response = httpClient.newCall(request).execute()
                 if (response.isSuccessful) {
                     android.util.Log.d("LocationService", "Location updated in Supabase")
-                } else {
-                    android.util.Log.e("LocationService", "Location update failed: ${response.code}")
-                    if (response.code == 401) {
-                        android.util.Log.w("LocationService", "Got 401 on location update, checking SharedPreferences for newer token...")
-                        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
-                        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null)
-                        if (storedJson != null) {
-                            try {
-                                val tokenJson = JSONObject(storedJson)
-                                val storedAccessToken = tokenJson.optString("access_token", null)
-                                if (storedAccessToken != null && storedAccessToken != bearerToken) {
-                                    bearerToken = storedAccessToken
-                                    android.util.Log.d("LocationService", "Token updated from storage after 401 on location update")
-                                }
-                            } catch (e: Exception) {
-                                android.util.Log.e("LocationService", "Error reading stored token after 401: ${e.message}")
-                            }
+                } else if (response.code == 401) {
+                    android.util.Log.w("LocationService", "Got 401 on location update, waiting 2s for JS bridge to push fresh token...")
+                    kotlinx.coroutines.delay(2000)
+                    if (updateTokenFromStorage()) {
+                        val retryToken = bearerToken ?: return@launch
+                        val retryRequest = Request.Builder()
+                            .url("$supabaseUrl/rest/v1/locations?on_conflict=user_id")
+                            .addHeader("Authorization", "Bearer $retryToken")
+                            .addHeader("apikey", supabaseAnonKey)
+                            .addHeader("Content-Type", "application/json")
+                            .addHeader("Prefer", "resolution=merge-duplicates,return=minimal")
+                            .post(requestBody)
+                            .build()
+                        val retryResponse = httpClient.newCall(retryRequest).execute()
+                        if (retryResponse.isSuccessful) {
+                            android.util.Log.d("LocationService", "Location updated in Supabase (retry after 401)")
+                        } else {
+                            android.util.Log.e("LocationService", "Location update retry failed: ${retryResponse.code}")
                         }
                     }
+                } else {
+                    android.util.Log.e("LocationService", "Location update failed: ${response.code}")
                 }
             } catch (e: Exception) {
                 android.util.Log.e("LocationService", "Location update error: ${e.message}")
