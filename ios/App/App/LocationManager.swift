@@ -46,10 +46,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.activityType = .otherNavigation
 
-        // iOS 17+ requires CLServiceSession for background location in release builds
-        if #available(iOS 17.0, *) {
+        // iOS 18+ requires CLServiceSession for background location in release builds
+        if #available(iOS 18.0, *) {
             serviceSession = CLServiceSession(authorization: .always)
-            print("[LocationManager] CLServiceSession created (iOS 17+)")
+            print("[LocationManager] CLServiceSession created (iOS 18+)")
         }
 
         // Listen for foreground/background transitions natively so we don't
