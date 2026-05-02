@@ -20,6 +20,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var lastHeartbeatTime: Date = .distantPast
     private var isInBackground: Bool = false
 
+    // Debug logging — sends events to Supabase so we can monitor iOS background behavior
+    // without needing Xcode console. Visible in Supabase Dashboard → profiles.last_debug_event
+    private var lastDebugLogTime: Date = .distantPast
+    private let debugLogThrottle: TimeInterval = 10 // Only log once per 10 seconds to avoid flooding
+
     override init() {
         guard let url = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String,
               let key = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String else {
@@ -101,6 +106,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         loadProfileSettings()
 
         print("[LocationManager] Location updates started for userId=\(userId), authStatus=\(status.rawValue)")
+        sendDebugLog("start_location_updates", details: "authStatus=\(status.rawValue)")
     }
 
     func stopLocationUpdates() {
@@ -219,6 +225,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     @objc private func appDidEnterBackground() {
         isInBackground = true
         print("[LocationManager] App entered background (native)")
+        sendDebugLog("app_background")
         // Switch to battery-efficient accuracy for background.
         // This prevents iOS from throttling or killing our location updates.
         locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
@@ -232,6 +239,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     @objc private func appDidBecomeActive() {
         isInBackground = false
         print("[LocationManager] App became active (native)")
+        sendDebugLog("app_foreground")
         // Switch to high accuracy in foreground for precise tracking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
@@ -269,6 +277,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             // Expiration handler — iOS is about to suspend us. End cleanly.
             self?.endBackgroundTask(bgTaskId)
         }
+
+        sendDebugLog("did_update_locations", details: "bg=\(isInBackground)")
 
         // Refresh token asynchronously, then send heartbeat + location update
         refreshTokenAsync { [weak self] in
@@ -324,8 +334,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // But if it is, restart updates immediately and start the heartbeat timer
         // to keep the user online.
         print("[LocationManager] ⚠️ Location updates PAUSED — restarting immediately")
+        sendDebugLog("location_paused_restart")
         manager.startUpdatingLocation()
-        manager.startMonitoringSignificantLocationChanges()
         startHeartbeatTimer()
     }
 
@@ -472,6 +482,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
                 self.authToken = newAccessToken
                 print("[LocationManager] ✓ Token refreshed via Supabase (native)")
+                self?.sendDebugLog("token_refreshed")
 
                 if let userObj = newSession["user"] as? [String: Any],
                    let newUserId = userObj["id"] as? String {
@@ -597,6 +608,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Heartbeat sent")
+                    self?.sendDebugLog("heartbeat_ok")
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
@@ -652,6 +664,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Location updated")
+                    self?.sendDebugLog("location_updated")
                 } else {
                     print("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
                 }
@@ -753,5 +766,41 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         let request = UNNotificationRequest(identifier: "proximity-\(profileId)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Debug Logging
+    // Sends debug events to Supabase profiles.last_debug_event column.
+    // This lets us monitor iOS background behavior from the Supabase Dashboard
+    // without needing Xcode. Throttled to once per 10 seconds to avoid flooding.
+
+    private func sendDebugLog(_ event: String, details: String? = nil) {
+        let now = Date()
+        guard now.timeIntervalSince(lastDebugLogTime) >= debugLogThrottle else { return }
+        lastDebugLogTime = now
+
+        guard let userId = userId, let token = authToken else { return }
+
+        var message = event
+        if let details = details {
+            message += " | \(details)"
+        }
+
+        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
+        guard let url = URL(string: urlString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let body: [String: Any] = [
+            "last_debug_event": "\(message) @ \(formatter.string(from: now))"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request).resume()
     }
 }
