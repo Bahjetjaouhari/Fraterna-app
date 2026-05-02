@@ -482,7 +482,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
                 self.authToken = newAccessToken
                 print("[LocationManager] ✓ Token refreshed via Supabase (native)")
-                self?.sendDebugLog("token_refreshed")
+                self.sendDebugLog("token_refreshed")
 
                 if let userObj = newSession["user"] as? [String: Any],
                    let newUserId = userObj["id"] as? String {
@@ -664,7 +664,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Location updated")
-                    self?.sendDebugLog("location_updated")
+                    self.sendDebugLog("location_updated")
                 } else {
                     print("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
                 }
