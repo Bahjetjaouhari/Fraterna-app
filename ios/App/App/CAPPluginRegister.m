@@ -10,4 +10,5 @@ CAP_PLUGIN(LocationServicePlugin, "LocationService",
     CAP_PLUGIN_METHOD(setTrackingEnabled, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(setForegroundAccuracy, CAPPluginReturnPromise);
     CAP_PLUGIN_METHOD(setBackgroundAccuracy, CAPPluginReturnPromise);
+    CAP_PLUGIN_METHOD(updateAuthToken, CAPPluginReturnPromise);
 )

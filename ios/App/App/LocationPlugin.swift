@@ -59,4 +59,14 @@ public class LocationServicePlugin: CAPPlugin {
         LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
         call.resolve()
     }
+
+    @objc func updateAuthToken(_ call: CAPPluginCall) {
+        guard let authToken = call.getString("authToken") else {
+            call.reject("Missing authToken")
+            return
+        }
+        let userId = call.getString("userId")
+        LocationServicePlugin.sharedLocationManager?.updateAuthToken(authToken: authToken, userId: userId)
+        call.resolve()
+    }
 }

@@ -111,6 +111,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         authToken = nil
     }
 
+    /// Update auth token from JS bridge (called on every onAuthStateChange and app foreground resume)
+    func updateAuthToken(authToken: String, userId: String? = nil) {
+        self.authToken = authToken
+        if let userId = userId {
+            self.userId = userId
+        }
+        print("[LocationManager] Auth token updated from JS bridge")
+    }
+
     func setTrackingEnabled(_ enabled: Bool) {
         trackingEnabled = enabled
         if enabled {
@@ -334,7 +343,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
     }
 
-    // MARK: - Token Refresh (ASYNC — no semaphore)
+    // MARK: - Token Refresh
+    // Only checks UserDefaults for newer tokens written by the JS client.
+    // Does NOT attempt Supabase token refresh — the refresh_token in UserDefaults
+    // is always stale because the JS client already used it for its own refresh.
+    // Fresh tokens come from the JS bridge via updateAuthToken() / onAuthStateChange.
 
     private func refreshTokenAsync(completion: @escaping () -> Void) {
         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
@@ -345,124 +358,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             return
         }
 
-        // First: check if JS client already refreshed the token in storage
+        // Check if JS client already refreshed the token in storage
         if let storedAccessToken = json["access_token"] as? String,
            storedAccessToken != authToken {
             authToken = storedAccessToken
             print("[LocationManager] Token updated from storage (JS client refreshed)")
         }
-
-        // Check if current token is expired or about to expire (within 5 minutes)
-        guard let currentToken = authToken else {
-            completion()
-            return
-        }
-        if isTokenExpiringSoon(currentToken, thresholdSeconds: 300) {
-            print("[LocationManager] Token expiring soon, refreshing via Supabase...")
-            if let refreshTokenStr = json["refresh_token"] as? String {
-                performTokenRefreshAsync(refreshToken: refreshTokenStr, completion: completion)
-            } else {
-                print("[LocationManager] No refresh_token found in stored session")
-                completion()
-            }
-        } else {
-            completion()
-        }
-    }
-
-    private func isTokenExpiringSoon(_ token: String, thresholdSeconds: TimeInterval) -> Bool {
-        let parts = token.split(separator: ".")
-        guard parts.count == 3 else { return true }
-
-        var base64 = String(parts[1])
-        let remainder = base64.count % 4
-        if remainder > 0 {
-            base64 += String(repeating: "=", count: 4 - remainder)
-        }
-
-        guard let payloadData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
-              let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
-              let exp = payload["exp"] as? TimeInterval else {
-            return true
-        }
-
-        let nowSeconds = Date().timeIntervalSince1970
-        return (exp - nowSeconds) < thresholdSeconds
-    }
-
-    private func performTokenRefreshAsync(refreshToken: String, completion: @escaping () -> Void) {
-        let urlString = "\(supabaseUrl)/auth/v1/token?grant_type=refresh_token"
-        guard let url = URL(string: urlString) else {
-            completion()
-            return
-        }
-
-        var request = URLRequest(url: url)
-        request.httpMethod = "POST"
-        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
-        let body: [String: Any] = ["refresh_token": refreshToken]
-        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
-
-        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self else {
-                completion()
-                return
-            }
-
-            guard let data = data, error == nil,
-                  let httpResponse = response as? HTTPURLResponse,
-                  httpResponse.statusCode == 200 else {
-                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                print("[LocationManager] Token refresh failed: \(statusCode) - \(error?.localizedDescription ?? "unknown")")
-                if statusCode == 400 || statusCode == 401 {
-                    print("[LocationManager] Refresh token is invalid. User needs to re-login.")
-                }
-                completion()
-                return
-            }
-
-            do {
-                guard let newSession = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let newAccessToken = newSession["access_token"] as? String else {
-                    completion()
-                    return
-                }
-
-                self.authToken = newAccessToken
-                print("[LocationManager] Token refreshed successfully via Supabase")
-
-                if let userObj = newSession["user"] as? [String: Any],
-                   let newUserId = userObj["id"] as? String {
-                    self.userId = newUserId
-                }
-
-                // Update UserDefaults so JS client also picks up the new tokens
-                let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
-                if let jsonString = UserDefaults.standard.string(forKey: key),
-                   let jsonData = jsonString.data(using: .utf8),
-                   var storedSession = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-
-                    storedSession["access_token"] = newAccessToken
-                    if let newRefreshToken = newSession["refresh_token"] as? String {
-                        storedSession["refresh_token"] = newRefreshToken
-                    }
-                    storedSession["expires_at"] = newSession["expires_at"]
-                    storedSession["expires_in"] = newSession["expires_in"]
-                    storedSession["token_type"] = "bearer"
-
-                    if let updatedData = try? JSONSerialization.data(withJSONObject: storedSession),
-                       let updatedString = String(data: updatedData, encoding: .utf8) {
-                        UserDefaults.standard.set(updatedString, forKey: key)
-                        print("[LocationManager] Updated token in UserDefaults")
-                    }
-                }
-            } catch {
-                print("[LocationManager] Error parsing refresh response: \(error)")
-            }
-            completion()
-        }.resume()
+        // No Supabase refresh attempt — the refresh_token is always stale
+        completion()
     }
 
     // MARK: - Profile Settings
@@ -559,15 +462,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
-                        print("[LocationManager] Got 401, forcing token refresh...")
+                        print("[LocationManager] Got 401, checking UserDefaults for newer token...")
                         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
                         if let jsonString = UserDefaults.standard.string(forKey: key),
                            let jsonData = jsonString.data(using: .utf8),
                            let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any],
-                           let rt = json["refresh_token"] as? String {
-                            self?.performTokenRefreshAsync(refreshToken: rt) {
-                                // Token refreshed, next heartbeat will use the new token
-                            }
+                           let storedAccessToken = json["access_token"] as? String,
+                           storedAccessToken != self?.authToken {
+                            self?.authToken = storedAccessToken
+                            print("[LocationManager] Token updated from storage after 401")
                         }
                     }
                 }
