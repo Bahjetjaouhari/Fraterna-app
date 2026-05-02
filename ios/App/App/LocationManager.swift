@@ -20,6 +20,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var lastHeartbeatTime: Date = .distantPast
     private var isInBackground: Bool = false
 
+    // CLServiceSession (iOS 17+) — required for background location to work in release builds
+    private var serviceSession: AnyObject?
+
     // Debug logging — sends events to Supabase so we can monitor iOS background behavior
     // without needing Xcode console. Visible in Supabase Dashboard → profiles.last_debug_event
     private var lastDebugLogTime: Date = .distantPast
@@ -42,6 +45,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         locationManager.showsBackgroundLocationIndicator = true
         locationManager.pausesLocationUpdatesAutomatically = false
         locationManager.activityType = .otherNavigation
+
+        // iOS 17+ requires CLServiceSession for background location in release builds
+        if #available(iOS 17.0, *) {
+            serviceSession = CLServiceSession(authorization: .always)
+            print("[LocationManager] CLServiceSession created (iOS 17+)")
+        }
 
         // Listen for foreground/background transitions natively so we don't
         // depend on the Capacitor JS bridge (which is suspended in background).
