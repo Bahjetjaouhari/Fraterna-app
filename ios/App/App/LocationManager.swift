@@ -779,26 +779,29 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     // MARK: - Debug Logging
     // Sends debug events to Supabase profiles.last_debug_event column.
-    // This lets us monitor iOS background behavior from the Supabase Dashboard
-    // without needing Xcode. Throttled to once per 10 seconds to avoid flooding.
+    // Uses the anon key as auth fallback when user token isn't available yet.
+    // Throttled to once per 10 seconds to avoid flooding.
 
     private func sendDebugLog(_ event: String, details: String? = nil) {
         let now = Date()
         guard now.timeIntervalSince(lastDebugLogTime) >= debugLogThrottle else { return }
         lastDebugLogTime = now
 
-        guard let userId = userId, let token = authToken else { return }
+        // Use userId if available, otherwise skip — we need a valid user ID to PATCH
+        guard let uid = userId else { return }
 
         var message = event
         if let details = details {
             message += " | \(details)"
         }
 
-        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
+        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(uid)"
         guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
-        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        // Use anon key as fallback when authToken isn't available yet
+        let authHeader = authToken ?? supabaseAnonKey
+        request.setValue("Bearer \(authHeader)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
@@ -810,6 +813,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request).resume()
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
+                print("[LocationManager] Debug log failed: \(httpResponse.statusCode)")
+                if let data = data, let body = String(data: data, encoding: .utf8) {
+                    print("[LocationManager] Debug log error body: \(body.prefix(200))")
+                }
+            }
+        }.resume()
     }
 }
