@@ -323,8 +323,26 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           // App came to foreground - send heartbeat and push fresh token to native service
           sendHeartbeat(user.id);
           window.dispatchEvent(new CustomEvent('app-resume'));
-          // Push fresh auth token to native service (may have been refreshed while app was in background)
+          // Push fresh auth token to native service.
+          // Read directly from Capacitor Preferences first — the native service may have
+          // refreshed the token while the app was in background, and we need the JS client
+          // to sync with the new session stored in Preferences.
           if (Capacitor.isNativePlatform()) {
+            try {
+              const { value: sessionJson } = await Preferences.get({ key: 'sb-vzlbvknauwvrqwpvtaqe-auth-token' });
+              if (sessionJson) {
+                const storedSession = JSON.parse(sessionJson);
+                if (storedSession.access_token) {
+                  LocationService.updateAuthToken({
+                    authToken: storedSession.access_token,
+                    userId: storedSession.user?.id || user.id
+                  });
+                }
+              }
+            } catch (e) {
+              console.error('Failed to read session from Preferences on resume:', e);
+            }
+            // Also let Supabase JS client sync its in-memory state with storage
             const { data: { session: currentSession } } = await supabase.auth.getSession();
             if (currentSession?.access_token) {
               try {

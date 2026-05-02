@@ -641,16 +641,115 @@ class LocationForegroundService : Service() {
     }
 
     /**
-     * Check SharedPreferences for a newer token (written by JS client).
-     * Does NOT attempt Supabase token refresh — the refresh_token in SharedPreferences
-     * is always stale because the JS client already used it for its own refresh.
-     * Fresh tokens come from the JS bridge via updateAuthToken() / onAuthStateChange.
+     * Refresh auth token. Tries in order:
+     * 1. Check SharedPreferences for a token newer than current (written by JS client)
+     * 2. If current token is expired, attempt native Supabase refresh using the
+     *    refresh_token from SharedPreferences. This works in background because
+     *    the JS webview is suspended and hasn't consumed the refresh_token.
      */
     private fun refreshToken() {
         val now = System.currentTimeMillis()
         if (now - lastTokenRefreshMs < TOKEN_REFRESH_THROTTLE_MS) return
         lastTokenRefreshMs = now
-        updateTokenFromStorage()
+
+        // Fast path: check if JS client already refreshed the token in storage
+        if (updateTokenFromStorage()) return
+
+        // Fallback: if current token is expired, try native Supabase refresh
+        val currentToken = bearerToken ?: return
+        if (isTokenExpired(currentToken)) {
+            refreshTokenViaSupabase()
+        }
+    }
+
+    /**
+     * Check if a JWT token is expired by decoding the exp claim.
+     */
+    private fun isTokenExpired(token: String): Boolean {
+        try {
+            val parts = token.split(".")
+            if (parts.size != 3) return true
+            val payload = String(Base64.decode(parts[1], Base64.URL_SAFE or Base64.NO_WRAP or Base64.NO_PADDING))
+            val payloadJson = JSONObject(payload)
+            val exp = payloadJson.optLong("exp", 0)
+            if (exp == 0L) return true
+            val nowSeconds = System.currentTimeMillis() / 1000
+            return nowSeconds >= exp
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Error decoding JWT: ${e.message}")
+            return true
+        }
+    }
+
+    /**
+     * Attempt to refresh the auth token using Supabase's refresh_token endpoint.
+     * Uses the refresh_token from SharedPreferences — this is valid in background
+     * because the JS webview is suspended and hasn't consumed it.
+     * After success, writes the complete new session to SharedPreferences so
+     * the JS client can pick it up on resume.
+     */
+    private fun refreshTokenViaSupabase() {
+        val prefs = getSharedPreferences("CapacitorStorage", Context.MODE_PRIVATE)
+        val storedJson = prefs.getString("sb-vzlbvknauwvrqwpvtaqe-auth-token", null) ?: return
+
+        try {
+            val tokenJson = JSONObject(storedJson)
+            val refreshToken = tokenJson.optString("refresh_token", null) ?: return
+
+            android.util.Log.d("LocationService", "Token expired, attempting native Supabase refresh...")
+
+            val body = JSONObject().apply { put("refresh_token", refreshToken) }
+            val requestBody = body.toString().toRequestBody("application/json".toMediaType())
+
+            val request = Request.Builder()
+                .url("$supabaseUrl/auth/v1/token?grant_type=refresh_token")
+                .addHeader("apikey", supabaseAnonKey)
+                .addHeader("Content-Type", "application/json")
+                .post(requestBody)
+                .build()
+
+            val response = httpClient.newCall(request).execute()
+            val responseBody = response.body?.string()
+
+            if (response.isSuccessful && responseBody != null) {
+                val newSession = JSONObject(responseBody)
+                val newAccessToken = newSession.optString("access_token", null)
+
+                if (newAccessToken != null) {
+                    bearerToken = newAccessToken
+                    android.util.Log.d("LocationService", "✓ Token refreshed via Supabase (native)")
+
+                    // Update userId if available
+                    val userObj = newSession.optJSONObject("user")
+                    if (userObj != null) {
+                        val newUserId = userObj.optString("id", null)
+                        if (newUserId != null) currentUserId = newUserId
+                    }
+
+                    // Write the complete new session to SharedPreferences
+                    // so the JS client can pick it up on resume
+                    tokenJson.put("access_token", newAccessToken)
+                    val newRefreshToken = newSession.optString("refresh_token", null)
+                    if (newRefreshToken != null) {
+                        tokenJson.put("refresh_token", newRefreshToken)
+                    }
+                    tokenJson.put("expires_at", newSession.optLong("expires_at", 0))
+                    tokenJson.put("expires_in", newSession.optInt("expires_in", 3600))
+                    tokenJson.put("token_type", "bearer")
+
+                    prefs.edit()
+                        .putString("sb-vzlbvknauwvrqwpvtaqe-auth-token", tokenJson.toString())
+                        .apply()
+                    android.util.Log.d("LocationService", "New session written to SharedPreferences")
+                }
+            } else {
+                val statusCode = response.code
+                val errorBody = responseBody?.take(200) ?: "no body"
+                android.util.Log.e("LocationService", "Native token refresh failed: $statusCode - $errorBody")
+            }
+        } catch (e: Exception) {
+            android.util.Log.e("LocationService", "Native token refresh error: ${e.message}")
+        }
     }
 
 
@@ -754,11 +853,14 @@ class LocationForegroundService : Service() {
                 if (response.isSuccessful) {
                     android.util.Log.d("LocationService", "Heartbeat sent successfully")
                 } else if (response.code == 401) {
-                    android.util.Log.w("LocationService", "Got 401 on heartbeat, waiting 2s for JS bridge to push fresh token...")
-                    kotlinx.coroutines.delay(2000)
-                    if (updateTokenFromStorage()) {
-                        // Retry once with the new token
-                        val retryToken = bearerToken ?: return@launch
+                    val errorBody = response.body?.string()?.take(200) ?: "no body"
+                    android.util.Log.w("LocationService", "Got 401 on heartbeat: $errorBody")
+                    // Force refresh: reset throttle, try SharedPreferences then native Supabase refresh
+                    lastTokenRefreshMs = 0
+                    refreshToken() // This checks SharedPreferences first, then tries Supabase refresh
+                    // Retry once if token was updated
+                    val retryToken = bearerToken
+                    if (retryToken != null && retryToken != token) {
                         val retryRequest = Request.Builder()
                             .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId")
                             .addHeader("Authorization", "Bearer $retryToken")
@@ -774,7 +876,7 @@ class LocationForegroundService : Service() {
                             android.util.Log.e("LocationService", "Heartbeat retry failed: ${retryResponse.code}")
                         }
                     } else {
-                        android.util.Log.w("LocationService", "No newer token found after 401, next cycle will retry")
+                        android.util.Log.w("LocationService", "Could not refresh token after 401, next cycle will retry")
                     }
                 } else {
                     android.util.Log.e("LocationService", "Heartbeat failed: ${response.code}")
@@ -851,10 +953,12 @@ class LocationForegroundService : Service() {
                 if (response.isSuccessful) {
                     android.util.Log.d("LocationService", "Location updated in Supabase")
                 } else if (response.code == 401) {
-                    android.util.Log.w("LocationService", "Got 401 on location update, waiting 2s for JS bridge to push fresh token...")
-                    kotlinx.coroutines.delay(2000)
-                    if (updateTokenFromStorage()) {
-                        val retryToken = bearerToken ?: return@launch
+                    val errorBody = response.body?.string()?.take(200) ?: "no body"
+                    android.util.Log.w("LocationService", "Got 401 on location update: $errorBody")
+                    lastTokenRefreshMs = 0
+                    refreshToken()
+                    val retryToken = bearerToken
+                    if (retryToken != null && retryToken != token) {
                         val retryRequest = Request.Builder()
                             .url("$supabaseUrl/rest/v1/locations?on_conflict=user_id")
                             .addHeader("Authorization", "Bearer $retryToken")
