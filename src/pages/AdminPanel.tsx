@@ -19,6 +19,7 @@ import {
   XCircle,
   Loader2,
   Trash2,
+  Bug,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -64,10 +65,22 @@ type ReportRow = {
   reported_name: string | null;
 };
 
+type DebugRow = {
+  id: string;
+  full_name: string | null;
+  email: string | null;
+  last_heartbeat_at: string | null;
+  last_debug_event: string | null;
+  tracking_enabled: boolean;
+  stealth_mode: boolean;
+  current_device_id: string | null;
+  updated_at: string;
+};
+
 export const AdminPanel: React.FC = () => {
   const { isAdmin } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"users" | "reports" | "chat">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "reports" | "chat" | "debug">("users");
 
   // Users state
   const [users, setUsers] = useState<ProfileRow[]>([]);
@@ -79,6 +92,10 @@ export const AdminPanel: React.FC = () => {
   // Reports state
   const [reports, setReports] = useState<ReportRow[]>([]);
   const [reportsLoading, setReportsLoading] = useState(false);
+
+  // Debug state
+  const [debugUsers, setDebugUsers] = useState<DebugRow[]>([]);
+  const [debugLoading, setDebugLoading] = useState(false);
 
   const isProtectedUser = (userId: string) => SUPER_ADMIN_IDS.includes(userId);
 
@@ -361,6 +378,35 @@ export const AdminPanel: React.FC = () => {
     }
   };
 
+  const loadDebugUsers = async () => {
+    if (!isAdmin) return;
+    setDebugLoading(true);
+    try {
+      const { data, error } = await supabase
+        .from("profiles")
+        .select("id, full_name, email, last_heartbeat_at, last_debug_event, tracking_enabled, stealth_mode, current_device_id, updated_at")
+        .order("last_heartbeat_at", { ascending: false, nullsFirst: false });
+
+      if (error) {
+        console.error(error);
+        toast.error("No se pudieron cargar los datos de debug");
+        return;
+      }
+
+      setDebugUsers((data || []) as DebugRow[]);
+    } finally {
+      setDebugLoading(false);
+    }
+  };
+
+  // Auto-refresh debug tab every 15 seconds
+  useEffect(() => {
+    if (activeTab !== "debug" || !isAdmin) return;
+    const interval = setInterval(loadDebugUsers, 15000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin]);
+
   const updateReportStatus = async (reportId: string, newStatus: "resolved" | "dismissed") => {
     try {
       const { error } = await supabase
@@ -381,6 +427,7 @@ export const AdminPanel: React.FC = () => {
   useEffect(() => {
     if (activeTab === "users" && isAdmin) loadUsers();
     if (activeTab === "reports" && isAdmin) loadReports();
+    if (activeTab === "debug" && isAdmin) loadDebugUsers();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
@@ -452,6 +499,10 @@ export const AdminPanel: React.FC = () => {
                 <TabsTrigger value="chat" className="flex-1">
                   <MessageCircle size={16} className="mr-2" />
                   Chat
+                </TabsTrigger>
+                <TabsTrigger value="debug" className="flex-1">
+                  <Bug size={16} className="mr-2" />
+                  Debug
                 </TabsTrigger>
               </TabsList>
 
@@ -789,6 +840,91 @@ export const AdminPanel: React.FC = () => {
                       Vaciar chat global
                     </Button>
                   </div>
+                </div>
+              </TabsContent>
+
+              {/* DEBUG TAB */}
+              <TabsContent value="debug">
+                <div className="card-masonic p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-medium">Estado de Tracking en Tiempo Real</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Auto-refresh 15s</span>
+                      <Button size="sm" variant="outline" onClick={loadDebugUsers} disabled={debugLoading}>
+                        <RefreshCcw size={14} className={debugLoading ? "animate-spin" : ""} />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {debugLoading && debugUsers.length === 0 ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 size={24} className="animate-spin text-gold" />
+                    </div>
+                  ) : (
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead>
+                          <tr className="border-b border-border">
+                            <th className="text-left py-2 px-2">Usuario</th>
+                            <th className="text-left py-2 px-2">Estado</th>
+                            <th className="text-left py-2 px-2">Heartbeat</th>
+                            <th className="text-left py-2 px-2">Debug Event</th>
+                            <th className="text-left py-2 px-2">Tracking</th>
+                            <th className="text-left py-2 px-2">Stealth</th>
+                            <th className="text-left py-2 px-2">Device</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {debugUsers.map((u) => {
+                            const isOnline = u.last_heartbeat_at && u.tracking_enabled &&
+                              (Date.now() - new Date(u.last_heartbeat_at).getTime()) < 5 * 60 * 1000;
+                            const isStale = u.last_heartbeat_at &&
+                              (Date.now() - new Date(u.last_heartbeat_at).getTime()) < 15 * 60 * 1000;
+
+                            return (
+                              <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50">
+                                <td className="py-2 px-2">
+                                  <div className="font-medium">{u.full_name || "—"}</div>
+                                  <div className="text-xs text-muted-foreground">{u.email}</div>
+                                </td>
+                                <td className="py-2 px-2">
+                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                    isOnline ? "bg-green-500/20 text-green-400" :
+                                    isStale ? "bg-yellow-500/20 text-yellow-400" :
+                                    "bg-red-500/20 text-red-400"
+                                  }`}>
+                                    <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-400" : isStale ? "bg-yellow-400" : "bg-red-400"}`} />
+                                    {isOnline ? "Online" : isStale ? "Stale" : "Offline"}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2 text-xs font-mono">
+                                  {u.last_heartbeat_at
+                                    ? new Date(u.last_heartbeat_at).toLocaleString()
+                                    : "—"}
+                                </td>
+                                <td className="py-2 px-2 text-xs max-w-[200px] truncate" title={u.last_debug_event || ""}>
+                                  {u.last_debug_event || "—"}
+                                </td>
+                                <td className="py-2 px-2">
+                                  <span className={u.tracking_enabled ? "text-green-400" : "text-red-400"}>
+                                    {u.tracking_enabled ? "ON" : "OFF"}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2">
+                                  <span className={u.stealth_mode ? "text-yellow-400" : "text-muted-foreground"}>
+                                    {u.stealth_mode ? "ON" : "OFF"}
+                                  </span>
+                                </td>
+                                <td className="py-2 px-2 text-xs text-muted-foreground max-w-[100px] truncate" title={u.current_device_id || ""}>
+                                  {u.current_device_id ? u.current_device_id.substring(0, 8) + "…" : "—"}
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
               </TabsContent>
             </Tabs>

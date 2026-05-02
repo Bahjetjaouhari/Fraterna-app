@@ -154,6 +154,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               userId: userId,
               authToken: session.access_token
             });
+            // JS-side debug log to track when native service starts
+            supabase.from('profiles').update({
+              last_debug_event: `js_start_location_service @ ${new Date().toISOString()}`
+            }).eq('id', userId).then(({ error }) => {
+              if (error) console.error('[Auth] Debug log error:', error.message);
+            });
           } catch (e) {
             console.error('Failed to start native location service:', e);
             nativeServiceStartedRef.current = false;
@@ -323,6 +329,10 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
           // App came to foreground - send heartbeat and push fresh token to native service
           sendHeartbeat(user.id);
           window.dispatchEvent(new CustomEvent('app-resume'));
+          // JS-side debug log for foreground transition
+          supabase.from('profiles').update({
+            last_debug_event: `js_app_foreground @ ${new Date().toISOString()}`
+          }).eq('id', user.id).then();
           // Push fresh auth token to native service.
           // Read directly from Capacitor Preferences first — the native service may have
           // refreshed the token while the app was in background, and we need the JS client
@@ -452,6 +462,13 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
       } catch (e) {
         console.error('Failed to stop native location service:', e);
       }
+    }
+
+    // JS-side debug log for sign out
+    if (user?.id) {
+      supabase.from('profiles').update({
+        last_debug_event: `js_sign_out @ ${new Date().toISOString()}`
+      }).eq('id', user.id).then();
     }
 
     if (user?.id) {

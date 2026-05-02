@@ -342,6 +342,7 @@ export type Database = {
           is_blocked: boolean
           is_verified: boolean
           last_heartbeat_at: string | null
+          last_debug_event: string | null
           last_seen_at: string | null
           location_visibility_mode: string
           lodge: string | null
@@ -369,6 +370,7 @@ export type Database = {
           is_blocked?: boolean
           is_verified?: boolean
           last_heartbeat_at?: string | null
+          last_debug_event?: string | null
           last_seen_at?: string | null
           location_visibility_mode?: string
           lodge?: string | null
@@ -396,6 +398,7 @@ export type Database = {
           is_blocked?: boolean
           is_verified?: boolean
           last_heartbeat_at?: string | null
+          last_debug_event?: string | null
           last_seen_at?: string | null
           location_visibility_mode?: string
           lodge?: string | null
