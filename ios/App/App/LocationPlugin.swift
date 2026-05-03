@@ -50,6 +50,15 @@ public class LocationServicePlugin: CAPPlugin {
         call.resolve()
     }
 
+    @objc func setStealthMode(_ call: CAPPluginCall) {
+        guard let enabled = call.getBool("enabled") else {
+            call.reject("Missing enabled parameter")
+            return
+        }
+        LocationServicePlugin.sharedLocationManager?.setStealthMode(enabled)
+        call.resolve()
+    }
+
     @objc func setForegroundAccuracy(_ call: CAPPluginCall) {
         LocationServicePlugin.sharedLocationManager?.setForegroundAccuracy()
         call.resolve()

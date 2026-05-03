@@ -847,7 +847,7 @@ export const AdminPanel: React.FC = () => {
               <TabsContent value="debug">
                 <div className="card-masonic p-4">
                   <div className="flex items-center justify-between mb-4">
-                    <h3 className="font-medium">Estado de Tracking en Tiempo Real</h3>
+                    <h3 className="font-medium">Diagnostico de Tracking</h3>
                     <div className="flex items-center gap-2">
                       <span className="text-xs text-muted-foreground">Auto-refresh 15s</span>
                       <Button size="sm" variant="outline" onClick={loadDebugUsers} disabled={debugLoading}>
@@ -861,68 +861,90 @@ export const AdminPanel: React.FC = () => {
                       <Loader2 size={24} className="animate-spin text-gold" />
                     </div>
                   ) : (
-                    <div className="overflow-x-auto">
-                      <table className="w-full text-sm">
-                        <thead>
-                          <tr className="border-b border-border">
-                            <th className="text-left py-2 px-2">Usuario</th>
-                            <th className="text-left py-2 px-2">Estado</th>
-                            <th className="text-left py-2 px-2">Heartbeat</th>
-                            <th className="text-left py-2 px-2">Debug Event</th>
-                            <th className="text-left py-2 px-2">Tracking</th>
-                            <th className="text-left py-2 px-2">Stealth</th>
-                            <th className="text-left py-2 px-2">Device</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {debugUsers.map((u) => {
-                            const isOnline = u.last_heartbeat_at && u.tracking_enabled &&
-                              (Date.now() - new Date(u.last_heartbeat_at).getTime()) < 5 * 60 * 1000;
-                            const isStale = u.last_heartbeat_at &&
-                              (Date.now() - new Date(u.last_heartbeat_at).getTime()) < 15 * 60 * 1000;
+                    <div className="space-y-3">
+                      {debugUsers.map((u) => {
+                        const now = Date.now();
+                        const heartbeatMs = u.last_heartbeat_at ? new Date(u.last_heartbeat_at).getTime() : 0;
+                        const secsAgo = u.last_heartbeat_at ? Math.floor((now - heartbeatMs) / 1000) : null;
+                        const isOnline = u.last_heartbeat_at && u.tracking_enabled && secsAgo !== null && secsAgo < 300;
+                        const isStale = u.last_heartbeat_at && secsAgo !== null && secsAgo < 900;
+                        const hasNativeDebug = u.last_debug_event && !u.last_debug_event.startsWith("js_");
+                        const hasJsDebug = u.last_debug_event && u.last_debug_event.startsWith("js_");
 
-                            return (
-                              <tr key={u.id} className="border-b border-border/50 hover:bg-muted/50">
-                                <td className="py-2 px-2">
-                                  <div className="font-medium">{u.full_name || "—"}</div>
-                                  <div className="text-xs text-muted-foreground">{u.email}</div>
-                                </td>
-                                <td className="py-2 px-2">
-                                  <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
-                                    isOnline ? "bg-green-500/20 text-green-400" :
-                                    isStale ? "bg-yellow-500/20 text-yellow-400" :
-                                    "bg-red-500/20 text-red-400"
-                                  }`}>
-                                    <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-400" : isStale ? "bg-yellow-400" : "bg-red-400"}`} />
-                                    {isOnline ? "Online" : isStale ? "Stale" : "Offline"}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-2 text-xs font-mono">
-                                  {u.last_heartbeat_at
-                                    ? new Date(u.last_heartbeat_at).toLocaleString()
-                                    : "—"}
-                                </td>
-                                <td className="py-2 px-2 text-xs max-w-[200px] truncate" title={u.last_debug_event || ""}>
-                                  {u.last_debug_event || "—"}
-                                </td>
-                                <td className="py-2 px-2">
-                                  <span className={u.tracking_enabled ? "text-green-400" : "text-red-400"}>
-                                    {u.tracking_enabled ? "ON" : "OFF"}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-2">
-                                  <span className={u.stealth_mode ? "text-yellow-400" : "text-muted-foreground"}>
-                                    {u.stealth_mode ? "ON" : "OFF"}
-                                  </span>
-                                </td>
-                                <td className="py-2 px-2 text-xs text-muted-foreground max-w-[100px] truncate" title={u.current_device_id || ""}>
-                                  {u.current_device_id ? u.current_device_id.substring(0, 8) + "…" : "—"}
-                                </td>
-                              </tr>
-                            );
-                          })}
-                        </tbody>
-                      </table>
+                        // Diagnostic reasoning
+                        let diagnosis = "";
+                        let diagnosisColor = "text-muted-foreground";
+                        if (!u.tracking_enabled) {
+                          diagnosis = "Tracking desactivado por el usuario";
+                          diagnosisColor = "text-yellow-400";
+                        } else if (!u.last_heartbeat_at) {
+                          diagnosis = "Nunca ha enviado heartbeat — la app no inicio el servicio nativo";
+                          diagnosisColor = "text-red-400";
+                        } else if (isOnline) {
+                          diagnosis = "Funcionando correctamente";
+                          diagnosisColor = "text-green-400";
+                        } else if (secsAgo !== null && secsAgo > 300 && secsAgo < 900) {
+                          if (hasJsDebug && !hasNativeDebug) {
+                            diagnosis = "iOS: servicio nativo NO envia heartbeats en background. Solo funciona en foreground.";
+                            diagnosisColor = "text-orange-400";
+                          } else if (!u.last_debug_event) {
+                            diagnosis = "No hay debug events — posible problema de autenticacion (401)";
+                            diagnosisColor = "text-red-400";
+                          } else {
+                            diagnosis = "Heartbeat stale — app posiblemente suspendida";
+                            diagnosisColor = "text-yellow-400";
+                          }
+                        } else if (secsAgo !== null && secsAgo >= 900) {
+                          if (hasJsDebug && !hasNativeDebug) {
+                            diagnosis = "iOS: app no envia heartbeats en background. Servicio nativo no funciona.";
+                            diagnosisColor = "text-red-400";
+                          } else {
+                            diagnosis = "Offline por mas de 15 min — app cerrada o servicio detenido";
+                            diagnosisColor = "text-red-400";
+                          }
+                        }
+
+                        const formatTimeAgo = (ms: number) => {
+                          const s = Math.floor(ms / 1000);
+                          if (s < 60) return `${s}s`;
+                          const m = Math.floor(s / 60);
+                          if (m < 60) return `${m}m`;
+                          const h = Math.floor(m / 60);
+                          return `${h}h ${m % 60}m`;
+                        };
+
+                        return (
+                          <div key={u.id} className="border border-border rounded-lg p-3">
+                            <div className="flex items-center justify-between mb-2">
+                              <div>
+                                <span className="font-medium">{u.full_name || u.email || "—"}</span>
+                                <span className={`ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium ${
+                                  isOnline ? "bg-green-500/20 text-green-400" :
+                                  isStale ? "bg-yellow-500/20 text-yellow-400" :
+                                  "bg-red-500/20 text-red-400"
+                                }`}>
+                                  <span className={`w-2 h-2 rounded-full ${isOnline ? "bg-green-400" : isStale ? "bg-yellow-400" : "bg-red-400"}`} />
+                                  {isOnline ? "Online" : isStale ? "Stale" : "Offline"}
+                                </span>
+                              </div>
+                              {secsAgo !== null && (
+                                <span className="text-xs text-muted-foreground">
+                                  Hace {formatTimeAgo(now - heartbeatMs)}
+                                </span>
+                              )}
+                            </div>
+
+                            <p className={`text-sm font-medium ${diagnosisColor}`}>{diagnosis}</p>
+
+                            <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                              <div>Heartbeat: <span className="text-foreground font-mono">{u.last_heartbeat_at ? new Date(u.last_heartbeat_at).toLocaleTimeString() : "nunca"}</span></div>
+                              <div>Tracking: <span className={u.tracking_enabled ? "text-green-400" : "text-red-400"}>{u.tracking_enabled ? "ON" : "OFF"}</span></div>
+                              <div>Debug: <span className="text-foreground font-mono max-w-[180px] truncate inline-block align-bottom" title={u.last_debug_event || ""}>{u.last_debug_event || "ninguno"}</span></div>
+                              <div>Stealth: <span className={u.stealth_mode ? "text-yellow-400" : "text-muted-foreground"}>{u.stealth_mode ? "ON" : "OFF"}</span></div>
+                            </div>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </div>

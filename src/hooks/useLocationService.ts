@@ -7,6 +7,7 @@ interface LocationServicePlugin {
   stopLocationUpdates: () => Promise<void>;
   isServiceRunning: () => Promise<{ running: boolean }>;
   setTrackingEnabled: (options: { enabled: boolean }) => Promise<void>;
+  setStealthMode: (options: { enabled: boolean }) => Promise<void>;
   setForegroundAccuracy: () => Promise<void>;
   setBackgroundAccuracy: () => Promise<void>;
   updateAuthToken: (options: { authToken: string; userId?: string }) => Promise<void>;

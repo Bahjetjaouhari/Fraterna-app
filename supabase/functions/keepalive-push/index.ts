@@ -209,7 +209,7 @@ serve(async (req) => {
 
     const { data: staleUsers, error } = await supabase
       .from('profiles')
-      .select('id, push_token')
+      .select('id, push_token, device_platform')
       .eq('tracking_enabled', true)
       .not('push_token', 'is', null)
       .lt('last_heartbeat_at', twoMinAgo)
@@ -238,11 +238,18 @@ serve(async (req) => {
     // Send silent pushes to all stale users
     const results = await Promise.allSettled(
       users.map(async (user) => {
-        // Detect platform from token format:
-        // iOS tokens are typically 64 hex chars
-        // Android/FCM tokens are longer and contain colons
-        const isIos = user.push_token.length <= 80 && !user.push_token.includes(':')
-        const platform = isIos ? 'ios' : 'android'
+        // Use stored device_platform column (set by the app when registering push token).
+        // Fallback to token format heuristic only if device_platform is null.
+        let platform: 'ios' | 'android'
+        if (user.device_platform === 'ios' || user.device_platform === 'android') {
+          platform = user.device_platform
+        } else {
+          // Legacy fallback: short hex tokens without colons are APNS (iOS),
+          // but since Firebase converts APNS tokens to FCM tokens before storing,
+          // this heuristic is unreliable for iOS. Default to android if uncertain.
+          const isIos = user.push_token.length <= 80 && !user.push_token.includes(':')
+          platform = isIos ? 'ios' : 'android'
+        }
 
         const result = await sendSilentPush(accessToken, projectId, user.push_token, platform)
         

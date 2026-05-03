@@ -351,6 +351,7 @@ export type Database = {
           proximity_alerts_enabled: boolean | null
           proximity_radius_km: number
           push_token: string | null
+          device_platform: string | null
           role: string
           stealth_mode: boolean
           tracking_enabled: boolean
@@ -379,6 +380,7 @@ export type Database = {
           proximity_alerts_enabled?: boolean | null
           proximity_radius_km?: number
           push_token?: string | null
+          device_platform?: string | null
           role?: string
           stealth_mode?: boolean
           tracking_enabled?: boolean
@@ -407,6 +409,7 @@ export type Database = {
           proximity_alerts_enabled?: boolean | null
           proximity_radius_km?: number
           push_token?: string | null
+          device_platform?: string | null
           role?: string
           stealth_mode?: boolean
           tracking_enabled?: boolean

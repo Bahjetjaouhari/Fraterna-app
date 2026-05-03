@@ -50,16 +50,17 @@ export const usePushNotifications = () => {
 
     console.log('Saving push token to profile, platform:', Capacitor.getPlatform(), 'token starts with:', token.substring(0, 20));
 
+    const platform = Capacitor.getPlatform(); // 'ios', 'android', or 'web'
     const { error } = await supabase
       .from('profiles')
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      .update({ push_token: token } as any)
+      .update({ push_token: token, device_platform: platform } as any)
       .eq('id', session.user.id);
 
     if (error) {
       console.error('Error saving push token to Supabase:', error);
     } else {
-      console.log('Push token saved to Supabase successfully');
+      console.log('Push token saved to Supabase successfully, platform:', platform);
     }
   };
 

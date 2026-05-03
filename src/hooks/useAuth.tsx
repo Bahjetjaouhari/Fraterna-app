@@ -241,12 +241,14 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     }
   };
 
-  // Sync tracking/stealth settings to native location service (iOS + Android)
+  // Sync tracking settings to native location service (iOS + Android)
+  // Stealth mode only hides location from other users — heartbeats must
+  // always continue so the user stays "online" even in stealth.
   useEffect(() => {
     if (!Capacitor.isNativePlatform() || !profile) return;
-    const enabled = profile.tracking_enabled && !profile.stealth_mode;
     try {
-      LocationService.setTrackingEnabled({ enabled });
+      LocationService.setTrackingEnabled({ enabled: profile.tracking_enabled });
+      LocationService.setStealthMode({ enabled: profile.stealth_mode });
     } catch (e) {
       console.error('Failed to sync tracking state to native:', e);
     }

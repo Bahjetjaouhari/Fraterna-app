@@ -161,6 +161,10 @@ class LocationForegroundService : Service() {
             trackingEnabledFromJS = enabled
         }
 
+        fun setStealthMode(enabled: Boolean) {
+            stealthMode = enabled
+        }
+
         fun updateBackgroundMode(bg: Boolean) {
             backgroundMode = bg
         }

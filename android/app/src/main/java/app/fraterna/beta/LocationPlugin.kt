@@ -124,6 +124,13 @@ class LocationPlugin : Plugin() {
     }
 
     @PluginMethod
+    fun setStealthMode(call: PluginCall) {
+        val enabled = call.getBoolean("enabled") ?: false
+        LocationForegroundService.setStealthMode(enabled)
+        call.resolve()
+    }
+
+    @PluginMethod
     fun setForegroundAccuracy(call: PluginCall) {
         LocationForegroundService.updateBackgroundMode(false)
         call.resolve()

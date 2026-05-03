@@ -183,6 +183,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
     }
 
+    /// Set stealth mode: hides the user's location from other users but keeps
+    /// heartbeats running so the user still appears "online". This matches the
+    /// Android behavior where stealth only skips updateLocationInSupabase().
+    func setStealthMode(_ enabled: Bool) {
+        stealthMode = enabled
+        print("[LocationManager] Stealth mode: \(enabled) — heartbeats continue regardless")
+        sendDebugLog("stealth_mode_changed", details: "enabled=\(enabled)")
+    }
+
     // MARK: - Authorization
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
