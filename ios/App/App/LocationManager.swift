@@ -37,15 +37,21 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private let debugLogThrottle: TimeInterval = 10 // Only log once per 10 seconds to avoid flooding
 
     override init() {
-        guard let url = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String,
-              let key = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String else {
-            supabaseUrl = ""
-            supabaseAnonKey = ""
-            super.init()
-            return
+        // Read Supabase config from Info.plist, with HARDCODED fallbacks.
+        // If Bundle.main.object(forInfoDictionaryKey:) returns nil (which can happen
+        // in certain build configurations), ALL network calls silently fail because
+        // URL(string: "") returns nil. The early return also skipped locationManager
+        // setup, killing ALL native tracking. We MUST NOT return early.
+        let bundleUrl = Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String
+        let bundleKey = Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String
+        supabaseUrl = bundleUrl?.isEmpty == false ? bundleUrl! : "https://vzlbvknauwvrqwpvtaqe.supabase.co"
+        supabaseAnonKey = bundleKey?.isEmpty == false ? bundleKey! : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bGJ2a25hdXd2cnF3cHZ0YXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4NzUwODUsImV4cCI6MjA4NDQ1MTA4NX0.XlPQBEKzv-RxOnTD1pbS-5A_J5xavLqwpWH9IAC5kOw"
+        if bundleUrl == nil || bundleUrl!.isEmpty {
+            print("[LocationManager] ⚠️ SupabaseUrl NOT found in Info.plist — using hardcoded fallback")
         }
-        supabaseUrl = url
-        supabaseAnonKey = key
+        if bundleKey == nil || bundleKey!.isEmpty {
+            print("[LocationManager] ⚠️ SupabaseAnonKey NOT found in Info.plist — using hardcoded fallback")
+        }
         super.init()
 
         locationManager.delegate = self
@@ -70,6 +76,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     func startLocationUpdates(userId: String, authToken: String) {
         self.userId = userId
         self.authToken = authToken
+
+        // Diagnostic: log whether supabaseUrl was loaded correctly
+        print("[LocationManager] startLocationUpdates called — supabaseUrl='\(supabaseUrl)', supabaseAnonKey count=\(supabaseAnonKey.count)")
 
         // Set up notification delegate for foreground notifications
         UNUserNotificationCenter.current().delegate = self
@@ -735,7 +744,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
         lastHeartbeatTime = now
 
-        let url = URL(string: "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)")!
+        let urlStr = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
+        guard let url = URL(string: urlStr) else {
+            print("[LocationManager] ⚠️ sendHeartbeat: INVALID URL — supabaseUrl='\(supabaseUrl)'")
+            completion?()
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
@@ -786,7 +800,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             return
         }
 
-        let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id")!
+        guard let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id") else {
+            print("[LocationManager] ⚠️ updateLocation: INVALID URL — supabaseUrl='\(supabaseUrl)'")
+            completion?()
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
@@ -980,7 +998,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     private func writeImmediateDebugEvent(_ event: String, userId: String) {
         let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
-        guard let url = URL(string: urlString) else { return }
+        guard let url = URL(string: urlString) else {
+            print("[LocationManager] ⚠️ writeImmediateDebugEvent: INVALID URL '\(urlString.prefix(80))' — supabaseUrl is empty or malformed!")
+            return
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
         let authHeader = authToken ?? supabaseAnonKey
