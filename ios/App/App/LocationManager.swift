@@ -241,10 +241,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func setBackgroundAccuracy() {
-        // Use NearestTenMeters in background to prevent iOS from throttling updates.
-        // kCLLocationAccuracyBest in background causes iOS to aggressively throttle
-        // or suspend location updates to preserve battery.
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        // Use kCLLocationAccuracyBest in background to KEEP THE GPS ACTIVE.
+        // Lower accuracy (NearestTenMeters) allows iOS to throttle updates for
+        // stationary devices, causing didUpdateLocations to stop firing.
+        // Higher accuracy forces iOS to keep GPS hardware active and deliver
+        // frequent updates, which triggers heartbeats via didUpdateLocations.
+        // This is how Android's ForegroundService stays online — the process
+        // never sleeps, and GPS is always active.
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
         // Ensure heartbeat is running in background
         if heartbeatTimer == nil {
@@ -258,10 +262,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     @objc private func appDidEnterBackground() {
         isInBackground = true
         print("[LocationManager] App entered background (native)")
-        sendDebugLog("app_background")
-        // Switch to battery-efficient accuracy for background.
-        // This prevents iOS from throttling or killing our location updates.
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        sendDebugLog("app_background", details: "accuracy=\(locationManager.desiredAccuracy)")
+        // Switch to best accuracy for background — this keeps GPS active
+        // and forces iOS to deliver frequent location updates even when stationary.
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
         // Ensure heartbeat timer is running
         if heartbeatTimer == nil {
@@ -321,6 +325,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard let location = locations.last,
               let userId = userId,
               trackingEnabled else { return }
+
+        sendDebugLog("did_update_locations", details: "bg=\(isInBackground), accuracy=\(location.horizontalAccuracy)m, speed=\(location.speed)m/s")
 
         // This is the PRIMARY heartbeat mechanism.
         // Every location update triggers a heartbeat + location upload.
@@ -739,7 +745,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok")
+                    self?.sendDebugLog("heartbeat_ok", details: "bg=\(self?.isInBackground ?? false)")
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
@@ -909,7 +915,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard now.timeIntervalSince(lastDebugLogTime) >= debugLogThrottle else { return }
         lastDebugLogTime = now
 
-        // Use userId if available, otherwise skip — we need a valid user ID to PATCH
+        // Use userId if available, otherwise skip
         guard let uid = userId else { return }
 
         var message = event
@@ -917,12 +923,32 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             message += " | \(details)"
         }
 
+        // 1. Insert into debug_log table (persistent history, visible in Supabase dashboard)
+        let insertUrlString = "\(supabaseUrl)/rest/v1/debug_log"
+        guard let insertUrl = URL(string: insertUrlString) else { return }
+        var insertRequest = URLRequest(url: insertUrl)
+        insertRequest.httpMethod = "POST"
+        let authHeader = authToken ?? supabaseAnonKey
+        insertRequest.setValue("Bearer \(authHeader)", forHTTPHeaderField: "Authorization")
+        insertRequest.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        insertRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        insertRequest.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+
+        let insertBody: [String: Any] = [
+            "user_id": uid,
+            "event": event,
+            "details": details ?? "",
+            "platform": "ios"
+        ]
+        insertRequest.httpBody = try? JSONSerialization.data(withJSONObject: insertBody)
+
+        URLSession.shared.dataTask(with: insertRequest).resume()
+
+        // 2. Also update profiles.last_debug_event for quick status checks
         let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(uid)"
         guard let url = URL(string: urlString) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "PATCH"
-        // Use anon key as fallback when authToken isn't available yet
-        let authHeader = authToken ?? supabaseAnonKey
         request.setValue("Bearer \(authHeader)", forHTTPHeaderField: "Authorization")
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -935,13 +961,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         ]
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
-        URLSession.shared.dataTask(with: request) { data, response, error in
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode >= 400 {
-                print("[LocationManager] Debug log failed: \(httpResponse.statusCode)")
-                if let data = data, let body = String(data: data, encoding: .utf8) {
-                    print("[LocationManager] Debug log error body: \(body.prefix(200))")
-                }
-            }
-        }.resume()
+        URLSession.shared.dataTask(with: request).resume()
     }
 }
