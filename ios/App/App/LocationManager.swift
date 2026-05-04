@@ -113,6 +113,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // detects place transitions. Provides an additional heartbeat trigger.
         locationManager.startMonitoringVisits()
 
+        // IMMEDIATELY write a debug event to confirm native code is running
+        // This does NOT use sendDebugLog (which might fail silently)
+        writeImmediateDebugEvent("native_start_location_updates", userId: userId)
+
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
         // when the app is in the foreground or briefly awakened by location updates.
@@ -263,6 +267,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         isInBackground = true
         print("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "accuracy=\(locationManager.desiredAccuracy)")
+        if let uid = userId {
+            writeImmediateDebugEvent("native_app_background", userId: uid)
+        }
         // Switch to best accuracy for background — this keeps GPS active
         // and forces iOS to deliver frequent location updates even when stationary.
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -746,6 +753,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Heartbeat sent")
                     self?.sendDebugLog("heartbeat_ok", details: "bg=\(self?.isInBackground ?? false)")
+                    if let uid = self?.userId {
+                        self?.writeImmediateDebugEvent("native_heartbeat_ok_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                    }
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
@@ -962,5 +972,40 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         request.httpBody = try? JSONSerialization.data(withJSONObject: body)
 
         URLSession.shared.dataTask(with: request).resume()
+    }
+
+    // MARK: - Immediate Debug Event
+    // Writes to profiles.last_debug_event WITHOUT throttle and WITHOUT debug_log.
+    // Used to confirm native code is executing even when sendDebugLog might fail.
+
+    private func writeImmediateDebugEvent(_ event: String, userId: String) {
+        let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
+        guard let url = URL(string: urlString) else { return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "PATCH"
+        let authHeader = authToken ?? supabaseAnonKey
+        request.setValue("Bearer \(authHeader)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.setValue("return=minimal", forHTTPHeaderField: "Prefer")
+
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let body: [String: Any] = [
+            "last_debug_event": "\(event) @ \(formatter.string(from: Date()))"
+        ]
+        request.httpBody = try? JSONSerialization.data(withJSONObject: body)
+
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if let httpResponse = response as? HTTPURLResponse {
+                print("[LocationManager] Immediate debug '\(event)' status: \(httpResponse.statusCode)")
+                if httpResponse.statusCode >= 400 {
+                    print("[LocationManager] Immediate debug FAILED: \(httpResponse.statusCode)")
+                }
+            }
+            if let error = error {
+                print("[LocationManager] Immediate debug error: \(error.localizedDescription)")
+            }
+        }.resume()
     }
 }
