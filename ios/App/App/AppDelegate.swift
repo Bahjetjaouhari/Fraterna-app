@@ -2,16 +2,23 @@ import UIKit
 import Capacitor
 import FirebaseCore
 import FirebaseMessaging
+import BackgroundTasks
 
 @UIApplicationMain
 class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
     var window: UIWindow?
+    private let heartbeatTaskIdentifier = "com.fraterna.heartbeat"
 
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?) -> Bool {
         // Initialize Firebase
         FirebaseApp.configure()
         Messaging.messaging().delegate = self
+
+        // Register BGProcessingTask for periodic background heartbeats
+        BGTaskScheduler.shared.register(forTaskWithIdentifier: heartbeatTaskIdentifier, using: nil) { task in
+            self.handleHeartbeatBackgroundTask(task as! BGProcessingTask)
+        }
 
         // If iOS launched the app in the background for location updates,
         // start the native LocationManager immediately — don't wait for JS.
@@ -23,7 +30,56 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             restoreLocationManagerFromStorage()
         }
 
+        // Schedule the first background heartbeat task
+        scheduleHeartbeatBackgroundTask()
+
         return true
+    }
+
+    // MARK: - BGProcessingTask for background heartbeats
+
+    private func scheduleHeartbeatBackgroundTask() {
+        let request = BGProcessingTaskRequest(identifier: heartbeatTaskIdentifier)
+        // Run every 15 minutes (earliest), requires network and external power is NOT required
+        request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
+        request.requiresNetworkConnectivity = true
+        request.requiresExternalPower = false
+
+        do {
+            try BGTaskScheduler.shared.submit(request)
+            print("[AppDelegate] Scheduled heartbeat BGProcessingTask for +15min")
+        } catch {
+            print("[AppDelegate] Failed to schedule BGProcessingTask: \(error)")
+        }
+    }
+
+    private func handleHeartbeatBackgroundTask(_ task: BGProcessingTask) {
+        print("[AppDelegate] BGProcessingTask fired — sending heartbeat")
+
+        // Schedule the next task before processing this one
+        scheduleHeartbeatBackgroundTask()
+
+        // Restore LocationManager if needed
+        if LocationServicePlugin.sharedLocationManager == nil {
+            restoreLocationManagerFromStorage()
+        }
+
+        // Send heartbeat
+        let locationManager = LocationServicePlugin.sharedLocationManager
+        locationManager?.sendHeartbeatNow()
+
+        // Also set background accuracy for ongoing location updates
+        locationManager?.setBackgroundAccuracy()
+
+        // Tell iOS we're done — use a short delay to let network calls complete
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
+            task.setTaskCompleted(success: true)
+        }
+
+        // If the system tells us to stop early, end gracefully
+        task.expirationHandler = {
+            task.setTaskCompleted(success: false)
+        }
     }
 
     private func restoreLocationManagerFromStorage() {
@@ -156,14 +212,34 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             restoreLocationManagerFromStorage()
         }
 
+        // Ensure background accuracy mode is active
+        LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
+
         // Send heartbeat immediately — this keeps the user "online"
         LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
 
-        // Give network calls time to complete before telling iOS we're done.
-        // The heartbeat takes ~1-3s typically, but we allow up to 10s for safety.
+        // Schedule a second heartbeat 10 seconds later to ensure the server
+        // receives the update even if the first attempt had network latency.
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
             self?.endSilentPushBackgroundTask(bgTaskId, completionHandler: completionHandler)
         }
+
+        // Also schedule a follow-up heartbeat 15 seconds after the push
+        // (before the background task expires at 25s)
+        var followUpTaskId: UIBackgroundTaskIdentifier = .invalid
+        followUpTaskId = application.beginBackgroundTask(withName: "SilentPushFollowUp") {
+            UIApplication.shared.endBackgroundTask(followUpTaskId)
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) { [weak self] in
+            self?.sendFollowUpHeartbeat()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) {
+                UIApplication.shared.endBackgroundTask(followUpTaskId)
+            }
+        }
+    }
+
+    private func sendFollowUpHeartbeat() {
+        LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
     }
 
     func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {

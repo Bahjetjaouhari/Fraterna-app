@@ -70,6 +70,12 @@
 		<string>location</string>
 		<string>fetch</string>
 		<string>remote-notification</string>
+		<string>processing</string>
+	</array>
+	<!-- Permitted background task identifiers for BGProcessingTask -->
+	<key>BGTaskSchedulerPermittedIdentifiers</key>
+	<array>
+		<string>com.fraterna.heartbeat</string>
 	</array>
 	<!-- Disable Firebase Messaging auto-swizzling to avoid conflict with Capacitor Push Notifications plugin -->
 	<key>FirebaseAppDelegateProxyEnabled</key>

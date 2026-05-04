@@ -20,6 +20,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var lastHeartbeatTime: Date = .distantPast
     private var isInBackground: Bool = false
 
+    // Background wiggle timer: periodically restarts location updates to force iOS
+    // to deliver at least one location callback even for stationary devices.
+    private var backgroundWiggleTimer: DispatchSourceTimer?
+    private let backgroundWiggleInterval: TimeInterval = 180 // 3 minutes
+
+    // Track the background task used for the initial grace-period heartbeats
+    private var bgGraceTaskId: UIBackgroundTaskIdentifier = .invalid
+
     // CLServiceSession (iOS 17+) — required for background location to work in release builds
     private var serviceSession: AnyObject?
 
@@ -101,6 +109,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Significant location changes work even when the app is terminated.
         // iOS relaunches the app with launchOptions[.location] when a significant change occurs.
         locationManager.startMonitoringSignificantLocationChanges()
+        // Visit monitoring delivers callbacks even for stationary devices when iOS
+        // detects place transitions. Provides an additional heartbeat trigger.
+        locationManager.startMonitoringVisits()
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -121,7 +132,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     func stopLocationUpdates() {
         locationManager.stopUpdatingLocation()
         locationManager.stopMonitoringSignificantLocationChanges()
+        locationManager.stopMonitoringVisits()
         stopHeartbeatTimer()
+        stopBackgroundWiggleTimer()
         userId = nil
         authToken = nil
     }
@@ -172,11 +185,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if enabled {
             locationManager.startUpdatingLocation()
             locationManager.startMonitoringSignificantLocationChanges()
+            locationManager.startMonitoringVisits()
             startHeartbeatTimer()
             sendHeartbeatNow()
         } else {
             locationManager.stopUpdatingLocation()
             locationManager.stopMonitoringSignificantLocationChanges()
+            locationManager.stopMonitoringVisits()
             stopHeartbeatTimer()
             // Don't set last_heartbeat_at to null — let it expire naturally on server
             print("[LocationManager] Tracking disabled — heartbeat will expire naturally")
@@ -252,6 +267,27 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if heartbeatTimer == nil {
             startHeartbeatTimer()
         }
+
+        // Start the background wiggle timer — periodically restarts location
+        // updates to force iOS to deliver at least one callback even for
+        // stationary devices. This is the key mechanism for keeping heartbeats
+        // alive when didUpdateLocations stops firing.
+        startBackgroundWiggleTimer()
+
+        // Send an immediate heartbeat using a UIBackgroundTask to ensure iOS
+        // doesn't suspend us before the network call completes.
+        // Then schedule a second heartbeat 30s later during the grace period.
+        sendHeartbeatNow()
+        var graceTaskId: UIBackgroundTaskIdentifier = .invalid
+        graceTaskId = UIApplication.shared.beginBackgroundTask(withName: "BackgroundGraceHeartbeat") { [weak self] in
+            self?.endBackgroundTask(graceTaskId)
+        }
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) { [weak self] in
+            self?.sendHeartbeatNow()
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) { [weak self] in
+                self?.endBackgroundTask(graceTaskId)
+            }
+        }
     }
 
     @objc private func appDidBecomeActive() {
@@ -261,6 +297,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Switch to high accuracy in foreground for precise tracking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
+        // Stop the wiggle timer — not needed in foreground
+        stopBackgroundWiggleTimer()
         // Send immediate heartbeat on resume to update status quickly
         sendHeartbeatNow()
     }
@@ -359,6 +397,81 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
         print("[LocationManager] Location updates resumed")
+    }
+
+    // MARK: - Visit Monitoring Delegate
+    // Visit monitoring delivers callbacks even for stationary devices when iOS
+    // detects place transitions (arriving/departing). This provides an additional
+    // heartbeat trigger independent of didUpdateLocations.
+
+    func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
+        guard let userId = userId, trackingEnabled else { return }
+        print("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
+        sendDebugLog("visit_detected", details: "arriving=\(visit.arrivalDate)")
+
+        // Protect with UIBackgroundTask so iOS doesn't suspend before network completes
+        var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "VisitHeartbeat") { [weak self] in
+            self?.endBackgroundTask(bgTaskId)
+        }
+
+        refreshTokenAsync { [weak self] in
+            guard let self = self, let token = self.authToken else {
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+                return
+            }
+            self.sendHeartbeat(userId: userId, authToken: token) {
+                UIApplication.shared.endBackgroundTask(bgTaskId)
+            }
+        }
+    }
+
+    // MARK: - Background Wiggle Timer
+    // iOS suspends DispatchSourceTimers when the app is suspended, and
+    // didUpdateLocations stops firing for stationary devices. This timer
+    // works around both issues by briefly restarting location updates with
+    // high accuracy every 3 minutes. iOS grants ~30 seconds of background
+    // time for each location update callback, during which we send a heartbeat.
+
+    private func startBackgroundWiggleTimer() {
+        // Don't restart if already running
+        if backgroundWiggleTimer != nil { return }
+        guard userId != nil else { return }
+
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + backgroundWiggleInterval, repeating: backgroundWiggleInterval, leeway: .seconds(30))
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            print("[LocationManager] Background wiggle: restarting location updates to force callback")
+            self.sendDebugLog("bg_wiggle_restart")
+
+            // Stop and restart location updates with high accuracy briefly.
+            // This forces iOS to acquire a new GPS fix and call didUpdateLocations.
+            self.locationManager.stopUpdatingLocation()
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+
+            // After 5 seconds, switch back to battery-efficient accuracy
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { [weak self] in
+                guard let self = self else { return }
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+            }
+
+            // Also send a direct heartbeat in case the location restart
+            // doesn't trigger didUpdateLocations quickly enough.
+            self.sendHeartbeatNow()
+        }
+        timer.resume()
+        backgroundWiggleTimer = timer
+        print("[LocationManager] Background wiggle timer started (every \(Int(backgroundWiggleInterval))s)")
+        sendDebugLog("wiggle_timer_started")
+    }
+
+    private func stopBackgroundWiggleTimer() {
+        backgroundWiggleTimer?.cancel()
+        backgroundWiggleTimer = nil
     }
 
     // MARK: - Heartbeat Timer
