@@ -124,7 +124,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
-        writeImmediateDebugEvent("native_start_location_updates", userId: userId)
+        // Include build number so we can verify which build is actually running
+        writeImmediateDebugEvent("native_v39_start", userId: userId)
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -277,7 +278,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         print("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "accuracy=\(locationManager.desiredAccuracy)")
         if let uid = userId {
-            writeImmediateDebugEvent("native_app_background", userId: uid)
+            writeImmediateDebugEvent("native_bg_v39", userId: uid)
         }
         // Switch to best accuracy for background — this keeps GPS active
         // and forces iOS to deliver frequent location updates even when stationary.
@@ -766,9 +767,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     print("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok", details: "bg=\(self?.isInBackground ?? false)")
+                    self?.sendDebugLog("heartbeat_ok_v39", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
-                        self?.writeImmediateDebugEvent("native_heartbeat_ok_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                        self?.writeImmediateDebugEvent("native_hb_v39_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
                     print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
