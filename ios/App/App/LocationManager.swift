@@ -47,10 +47,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         supabaseUrl = bundleUrl?.isEmpty == false ? bundleUrl! : "https://vzlbvknauwvrqwpvtaqe.supabase.co"
         supabaseAnonKey = bundleKey?.isEmpty == false ? bundleKey! : "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZ6bGJ2a25hdXd2cnF3cHZ0YXFlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njg4NzUwODUsImV4cCI6MjA4NDQ1MTA4NX0.XlPQBEKzv-RxOnTD1pbS-5A_J5xavLqwpWH9IAC5kOw"
         if bundleUrl == nil || bundleUrl!.isEmpty {
-            print("[LocationManager] ⚠️ SupabaseUrl NOT found in Info.plist — using hardcoded fallback")
+            NSLog("[LocationManager] ⚠️ SupabaseUrl NOT found in Info.plist — using hardcoded fallback")
         }
         if bundleKey == nil || bundleKey!.isEmpty {
-            print("[LocationManager] ⚠️ SupabaseAnonKey NOT found in Info.plist — using hardcoded fallback")
+            NSLog("[LocationManager] ⚠️ SupabaseAnonKey NOT found in Info.plist — using hardcoded fallback")
         }
         super.init()
 
@@ -63,7 +63,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // iOS 18+ requires CLServiceSession for background location in release builds
         if #available(iOS 18.0, *) {
             serviceSession = CLServiceSession(authorization: .always)
-            print("[LocationManager] CLServiceSession created (iOS 18+)")
+            NSLog("[LocationManager] CLServiceSession created (iOS 18+)")
         }
 
         // Listen for foreground/background transitions natively so we don't
@@ -78,7 +78,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         self.authToken = authToken
 
         // Diagnostic: log whether supabaseUrl was loaded correctly
-        print("[LocationManager] startLocationUpdates called — supabaseUrl='\(supabaseUrl)', supabaseAnonKey count=\(supabaseAnonKey.count)")
+        NSLog("[LocationManager] startLocationUpdates called — supabaseUrl='\(supabaseUrl)', supabaseAnonKey count=\(supabaseAnonKey.count)")
 
         // Set up notification delegate for foreground notifications
         UNUserNotificationCenter.current().delegate = self
@@ -86,9 +86,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Request notification permission for proximity alerts
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound, .badge]) { granted, error in
             if let error = error {
-                print("[LocationManager] Notification permission error: \(error)")
+                NSLog("[LocationManager] Notification permission error: \(error)")
             }
-            print("[LocationManager] Notification permission granted: \(granted)")
+            NSLog("[LocationManager] Notification permission granted: \(granted)")
         }
 
         // Request "Always" authorization — this is CRITICAL for background tracking.
@@ -139,7 +139,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Load profile settings
         loadProfileSettings()
 
-        print("[LocationManager] Location updates started for userId=\(userId), authStatus=\(status.rawValue)")
+        NSLog("[LocationManager] Location updates started for userId=\(userId), authStatus=\(status.rawValue)")
         sendDebugLog("start_location_updates", details: "authStatus=\(status.rawValue)")
     }
 
@@ -175,7 +175,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 UserDefaults.standard.set(updatedString, forKey: key)
             }
         }
-        print("[LocationManager] Auth token updated from JS bridge (persisted)")
+        NSLog("[LocationManager] Auth token updated from JS bridge (persisted)")
     }
 
     /// Read UserDefaults for a newer access_token than the current authToken.
@@ -190,7 +190,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             return false
         }
         authToken = storedAccessToken
-        print("[LocationManager] Token updated from storage")
+        NSLog("[LocationManager] Token updated from storage")
         return true
     }
 
@@ -208,7 +208,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             locationManager.stopMonitoringVisits()
             stopHeartbeatTimer()
             // Don't set last_heartbeat_at to null — let it expire naturally on server
-            print("[LocationManager] Tracking disabled — heartbeat will expire naturally")
+            NSLog("[LocationManager] Tracking disabled — heartbeat will expire naturally")
         }
     }
 
@@ -217,14 +217,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     /// Android behavior where stealth only skips updateLocationInSupabase().
     func setStealthMode(_ enabled: Bool) {
         stealthMode = enabled
-        print("[LocationManager] Stealth mode: \(enabled) — heartbeats continue regardless")
+        NSLog("[LocationManager] Stealth mode: \(enabled) — heartbeats continue regardless")
         sendDebugLog("stealth_mode_changed", details: "enabled=\(enabled)")
     }
 
     // MARK: - Authorization
 
     func locationManager(_ manager: CLLocationManager, didChangeAuthorization status: CLAuthorizationStatus) {
-        print("[LocationManager] Authorization changed to: \(status.rawValue)")
+        NSLog("[LocationManager] Authorization changed to: \(status.rawValue)")
 
         if status == .authorizedAlways {
             // Great — full background tracking is available
@@ -235,15 +235,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         } else if status == .authorizedWhenInUse {
             // User only granted "When In Use" — background tracking will stop when app is suspended
             // We need "Always" for reliable background tracking
-            print("[LocationManager] WARNING: Only 'When In Use' authorization. Background tracking will be limited.")
-            print("[LocationManager] User must go to Settings > Fraterna > Location > Always to enable full background tracking")
+            NSLog("[LocationManager] WARNING: Only 'When In Use' authorization. Background tracking will be limited.")
+            NSLog("[LocationManager] User must go to Settings > Fraterna > Location > Always to enable full background tracking")
             // Still start updates — they'll work while app is in foreground
             if userId != nil {
                 locationManager.startUpdatingLocation()
                 locationManager.startMonitoringSignificantLocationChanges()
             }
         } else if status == .denied || status == .restricted {
-            print("[LocationManager] Location authorization denied or restricted")
+            NSLog("[LocationManager] Location authorization denied or restricted")
         }
     }
 
@@ -275,7 +275,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     @objc private func appDidEnterBackground() {
         isInBackground = true
-        print("[LocationManager] App entered background (native)")
+        NSLog("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "accuracy=\(locationManager.desiredAccuracy)")
         if let uid = userId {
             writeImmediateDebugEvent("native_bg_v39", userId: uid)
@@ -313,7 +313,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     @objc private func appDidBecomeActive() {
         isInBackground = false
-        print("[LocationManager] App became active (native)")
+        NSLog("[LocationManager] App became active (native)")
         sendDebugLog("app_foreground")
         // Switch to high accuracy in foreground for precise tracking
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
@@ -325,7 +325,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     @objc private func appWillTerminate() {
-        print("[LocationManager] App will terminate — saving state")
+        NSLog("[LocationManager] App will terminate — saving state")
         // Don't stop location updates on termination.
         // startMonitoringSignificantLocationChanges will relaunch the app.
     }
@@ -405,21 +405,21 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
-        print("[LocationManager] Location error: \(error.localizedDescription)")
+        NSLog("[LocationManager] Location error: \(error.localizedDescription)")
     }
 
     func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
         // This should NOT be called because pausesLocationUpdatesAutomatically = false.
         // But if it is, restart updates immediately and start the heartbeat timer
         // to keep the user online.
-        print("[LocationManager] ⚠️ Location updates PAUSED — restarting immediately")
+        NSLog("[LocationManager] ⚠️ Location updates PAUSED — restarting immediately")
         sendDebugLog("location_paused_restart")
         manager.startUpdatingLocation()
         startHeartbeatTimer()
     }
 
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
-        print("[LocationManager] Location updates resumed")
+        NSLog("[LocationManager] Location updates resumed")
     }
 
     // MARK: - Visit Monitoring Delegate
@@ -429,7 +429,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     func locationManager(_ manager: CLLocationManager, didVisit visit: CLVisit) {
         guard let userId = userId, trackingEnabled else { return }
-        print("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
+        NSLog("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
         sendDebugLog("visit_detected", details: "arriving=\(visit.arrivalDate)")
 
         // Protect with UIBackgroundTask so iOS doesn't suspend before network completes
@@ -465,7 +465,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         timer.schedule(deadline: .now() + backgroundWiggleInterval, repeating: backgroundWiggleInterval, leeway: .seconds(30))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
-            print("[LocationManager] Background wiggle: restarting location updates to force callback")
+            NSLog("[LocationManager] Background wiggle: restarting location updates to force callback")
             self.sendDebugLog("bg_wiggle_restart")
 
             // Stop and restart location updates with high accuracy briefly.
@@ -488,7 +488,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
         timer.resume()
         backgroundWiggleTimer = timer
-        print("[LocationManager] Background wiggle timer started (every \(Int(backgroundWiggleInterval))s)")
+        NSLog("[LocationManager] Background wiggle timer started (every \(Int(backgroundWiggleInterval))s)")
         sendDebugLog("wiggle_timer_started")
     }
 
@@ -521,7 +521,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
         timer.resume()
         heartbeatTimer = timer
-        print("[LocationManager] Heartbeat timer started (every \(heartbeatInterval)s)")
+        NSLog("[LocationManager] Heartbeat timer started (every \(heartbeatInterval)s)")
     }
 
     private func stopHeartbeatTimer() {
@@ -559,16 +559,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if let storedAccessToken = json["access_token"] as? String,
            storedAccessToken != authToken {
             authToken = storedAccessToken
-            print("[LocationManager] Token updated from storage (JS client refreshed)")
+            NSLog("[LocationManager] Token updated from storage (JS client refreshed)")
         }
 
         // Fallback: if current token is expired, try native Supabase refresh
         if let currentToken = authToken, isTokenExpired(currentToken) {
-            print("[LocationManager] Token expired, attempting native Supabase refresh...")
+            NSLog("[LocationManager] Token expired, attempting native Supabase refresh...")
             if let refreshTokenStr = json["refresh_token"] as? String {
                 performTokenRefreshAsync(refreshToken: refreshTokenStr, completion: completion)
             } else {
-                print("[LocationManager] No refresh_token found in stored session")
+                NSLog("[LocationManager] No refresh_token found in stored session")
                 completion()
             }
         } else {
@@ -622,7 +622,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                   httpResponse.statusCode == 200 else {
                 let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
                 let errorBody = data.flatMap { String(data: $0, encoding: .utf8)?.prefix(200) }.map(String.init) ?? "no body"
-                print("[LocationManager] Native token refresh failed: \(statusCode) - \(errorBody)")
+                NSLog("[LocationManager] Native token refresh failed: \(statusCode) - \(errorBody)")
                 completion()
                 return
             }
@@ -635,7 +635,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 }
 
                 self.authToken = newAccessToken
-                print("[LocationManager] ✓ Token refreshed via Supabase (native)")
+                NSLog("[LocationManager] ✓ Token refreshed via Supabase (native)")
                 self.sendDebugLog("token_refreshed")
 
                 if let userObj = newSession["user"] as? [String: Any],
@@ -661,11 +661,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     if let updatedData = try? JSONSerialization.data(withJSONObject: storedSession),
                        let updatedString = String(data: updatedData, encoding: .utf8) {
                         UserDefaults.standard.set(updatedString, forKey: key)
-                        print("[LocationManager] New session written to UserDefaults")
+                        NSLog("[LocationManager] New session written to UserDefaults")
                     }
                 }
             } catch {
-                print("[LocationManager] Error parsing refresh response: \(error)")
+                NSLog("[LocationManager] Error parsing refresh response: \(error)")
             }
             completion()
         }.resume()
@@ -712,7 +712,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     // The stealth flag is checked in updateLocation() to skip the upload.
                     if let stealth = profile["stealth_mode"] as? Bool {
                         self.stealthMode = stealth
-                        print("[LocationManager] Stealth mode: \(stealth) — heartbeats continue regardless")
+                        NSLog("[LocationManager] Stealth mode: \(stealth) — heartbeats continue regardless")
                     }
                     if let radius = profile["proximity_radius_km"] as? Double {
                         self.proximityRadiusKm = radius
@@ -721,7 +721,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                         self.proximityAlertsEnabled = alerts
                     }
                 } catch {
-                    print("[LocationManager] Error loading profile settings: \(error)")
+                    NSLog("[LocationManager] Error loading profile settings: \(error)")
                 }
             }.resume()
         }
@@ -739,7 +739,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Throttle: don't send more than once per 30 seconds
         let now = Date()
         guard now.timeIntervalSince(lastHeartbeatTime) >= 30 else {
-            print("[LocationManager] Heartbeat throttled (sent \(Int(now.timeIntervalSince(lastHeartbeatTime)))s ago)")
+            NSLog("[LocationManager] Heartbeat throttled (sent \(Int(now.timeIntervalSince(lastHeartbeatTime)))s ago)")
             completion?()
             return
         }
@@ -747,7 +747,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         let urlStr = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
         guard let url = URL(string: urlStr) else {
-            print("[LocationManager] ⚠️ sendHeartbeat: INVALID URL — supabaseUrl='\(supabaseUrl)'")
+            NSLog("[LocationManager] ⚠️ sendHeartbeat: INVALID URL — supabaseUrl='\(supabaseUrl)'")
             completion?()
             return
         }
@@ -766,18 +766,18 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
-                    print("[LocationManager] ✓ Heartbeat sent")
+                    NSLog("[LocationManager] ✓ Heartbeat sent")
                     self?.sendDebugLog("heartbeat_ok_v39", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
                         self?.writeImmediateDebugEvent("native_hb_v39_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
-                    print("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
+                    NSLog("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
                     if httpResponse.statusCode == 401 {
-                        print("[LocationManager] Got 401, attempting token refresh...")
+                        NSLog("[LocationManager] Got 401, attempting token refresh...")
                         self?.refreshTokenAsync { [weak self] in
                             guard let self = self, let newToken = self.authToken, newToken != authToken else {
-                                print("[LocationManager] Could not refresh token after 401, next cycle will retry")
+                                NSLog("[LocationManager] Could not refresh token after 401, next cycle will retry")
                                 return
                             }
                             // Retry once with the new token
@@ -796,13 +796,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Check privacy flags — if stealth mode or tracking disabled, skip upload
         // but still allow heartbeats to keep the user "online" if they want to appear online
         if stealthMode || !trackingEnabled {
-            print("[LocationManager] Skipping location upload: stealth=\(stealthMode), tracking=\(trackingEnabled)")
+            NSLog("[LocationManager] Skipping location upload: stealth=\(stealthMode), tracking=\(trackingEnabled)")
             completion?()
             return
         }
 
         guard let url = URL(string: "\(supabaseUrl)/rest/v1/locations?on_conflict=user_id") else {
-            print("[LocationManager] ⚠️ updateLocation: INVALID URL — supabaseUrl='\(supabaseUrl)'")
+            NSLog("[LocationManager] ⚠️ updateLocation: INVALID URL — supabaseUrl='\(supabaseUrl)'")
             completion?()
             return
         }
@@ -829,10 +829,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         URLSession.shared.dataTask(with: request) { _, response, error in
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 201 || httpResponse.statusCode == 204 {
-                    print("[LocationManager] ✓ Location updated")
+                    NSLog("[LocationManager] ✓ Location updated")
                     self.sendDebugLog("location_updated")
                 } else {
-                    print("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
+                    NSLog("[LocationManager] ✗ Location update failed: \(httpResponse.statusCode)")
                 }
             }
             completion?()
@@ -879,7 +879,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     self.processProximityAlert(myLocation: location, entry: entry)
                 }
             } catch {
-                print("[LocationManager] Proximity parse error: \(error)")
+                NSLog("[LocationManager] Proximity parse error: \(error)")
             }
             completion?()
         }.resume()
@@ -1000,7 +1000,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private func writeImmediateDebugEvent(_ event: String, userId: String) {
         let urlString = "\(supabaseUrl)/rest/v1/profiles?id=eq.\(userId)"
         guard let url = URL(string: urlString) else {
-            print("[LocationManager] ⚠️ writeImmediateDebugEvent: INVALID URL '\(urlString.prefix(80))' — supabaseUrl is empty or malformed!")
+            NSLog("[LocationManager] ⚠️ writeImmediateDebugEvent: INVALID URL '\(urlString.prefix(80))' — supabaseUrl is empty or malformed!")
             return
         }
         var request = URLRequest(url: url)
@@ -1020,13 +1020,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         URLSession.shared.dataTask(with: request) { _, response, error in
             if let httpResponse = response as? HTTPURLResponse {
-                print("[LocationManager] Immediate debug '\(event)' status: \(httpResponse.statusCode)")
+                NSLog("[LocationManager] Immediate debug '\(event)' status: \(httpResponse.statusCode)")
                 if httpResponse.statusCode >= 400 {
-                    print("[LocationManager] Immediate debug FAILED: \(httpResponse.statusCode)")
+                    NSLog("[LocationManager] Immediate debug FAILED: \(httpResponse.statusCode)")
                 }
             }
             if let error = error {
-                print("[LocationManager] Immediate debug error: \(error.localizedDescription)")
+                NSLog("[LocationManager] Immediate debug error: \(error.localizedDescription)")
             }
         }.resume()
     }

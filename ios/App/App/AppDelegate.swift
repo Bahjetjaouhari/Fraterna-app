@@ -26,7 +26,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         // cold launches where the webview may not fully initialize before
         // iOS suspends the app again.
         if launchOptions?[.location] != nil {
-            print("[AppDelegate] App launched for location updates — starting LocationManager immediately")
+            NSLog("[AppDelegate] App launched for location updates — starting LocationManager immediately")
             restoreLocationManagerFromStorage()
         }
 
@@ -47,14 +47,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
         do {
             try BGTaskScheduler.shared.submit(request)
-            print("[AppDelegate] Scheduled heartbeat BGProcessingTask for +15min")
+            NSLog("[AppDelegate] Scheduled heartbeat BGProcessingTask for +15min")
         } catch {
-            print("[AppDelegate] Failed to schedule BGProcessingTask: \(error)")
+            NSLog("[AppDelegate] Failed to schedule BGProcessingTask: \(error)")
         }
     }
 
     private func handleHeartbeatBackgroundTask(_ task: BGProcessingTask) {
-        print("[AppDelegate] BGProcessingTask fired — sending heartbeat")
+        NSLog("[AppDelegate] BGProcessingTask fired — sending heartbeat")
 
         // Schedule the next task before processing this one
         scheduleHeartbeatBackgroundTask()
@@ -86,29 +86,29 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
 
         guard let jsonString = UserDefaults.standard.string(forKey: key) else {
-            print("[AppDelegate] No stored auth token found")
+            NSLog("[AppDelegate] No stored auth token found")
             return
         }
 
         guard let jsonData = jsonString.data(using: .utf8) else {
-            print("[AppDelegate] Could not convert token to data")
+            NSLog("[AppDelegate] Could not convert token to data")
             return
         }
 
         guard let json = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] else {
-            print("[AppDelegate] Could not parse token JSON")
+            NSLog("[AppDelegate] Could not parse token JSON")
             return
         }
 
         guard let accessToken = json["access_token"] as? String, !accessToken.isEmpty else {
-            print("[AppDelegate] No access_token in stored session")
+            NSLog("[AppDelegate] No access_token in stored session")
             return
         }
 
         // Extract user ID from JWT payload
         let parts = accessToken.split(separator: ".")
         guard parts.count == 3 else {
-            print("[AppDelegate] Invalid JWT format")
+            NSLog("[AppDelegate] Invalid JWT format")
             return
         }
 
@@ -121,7 +121,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         guard let payloadData = Data(base64Encoded: base64, options: .ignoreUnknownCharacters),
               let payload = try? JSONSerialization.jsonObject(with: payloadData) as? [String: Any],
               let userId = payload["sub"] as? String else {
-            print("[AppDelegate] Could not extract userId from JWT")
+            NSLog("[AppDelegate] Could not extract userId from JWT")
             return
         }
 
@@ -133,13 +133,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         var tokenToUse = accessToken
 
         if nowSeconds >= exp {
-            print("[AppDelegate] Stored access token expired (exp=\(exp), now=\(nowSeconds)), attempting refresh")
+            NSLog("[AppDelegate] Stored access token expired (exp=\(exp), now=\(nowSeconds)), attempting refresh")
             // Try to refresh the token natively using the refresh_token from storage
             if let refreshToken = json["refresh_token"] as? String {
                 let semaphore = DispatchSemaphore(value: 0)
                 let refreshUrl = "\(Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String ?? "")/auth/v1/token?grant_type=refresh_token"
                 guard let url = URL(string: refreshUrl) else {
-                    print("[AppDelegate] Invalid refresh URL")
+                    NSLog("[AppDelegate] Invalid refresh URL")
                     return
                 }
                 var request = URLRequest(url: url)
@@ -154,13 +154,13 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
                           let httpResponse = response as? HTTPURLResponse,
                           httpResponse.statusCode == 200 else {
                         let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                        print("[AppDelegate] Token refresh failed: \(statusCode)")
+                        NSLog("[AppDelegate] Token refresh failed: \(statusCode)")
                         return
                     }
                     if let newSession = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                        let newToken = newSession["access_token"] as? String {
                         tokenToUse = newToken
-                        print("[AppDelegate] Token refreshed successfully on cold start")
+                        NSLog("[AppDelegate] Token refreshed successfully on cold start")
                         // Update UserDefaults with new session
                         if let jsonString = UserDefaults.standard.string(forKey: "sb-vzlbvknauwvrqwpvtaqe-auth-token"),
                            let jsonData = jsonString.data(using: .utf8),
@@ -180,7 +180,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
                 }.resume()
                 semaphore.wait(timeout: .now() + 15)
             } else {
-                print("[AppDelegate] No refresh_token available, using expired token (will retry on heartbeat)")
+                NSLog("[AppDelegate] No refresh_token available, using expired token (will retry on heartbeat)")
             }
         }
 
@@ -190,14 +190,14 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         }
         LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: tokenToUse)
         LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
-        print("[AppDelegate] LocationManager started with userId=\(userId), tokenExpired=\(nowSeconds >= exp)")
+        NSLog("[AppDelegate] LocationManager started with userId=\(userId), tokenExpired=\(nowSeconds >= exp)")
     }
 
     // MARK: - Silent Push Notifications & Background Fetch
     // These methods wake the app to send heartbeats even when the user is stationary.
 
     func application(_ application: UIApplication, didReceiveRemoteNotification userInfo: [AnyHashable: Any], fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        print("[AppDelegate] Received remote notification (silent push)")
+        NSLog("[AppDelegate] Received remote notification (silent push)")
 
         // Protect the heartbeat with a UIBackgroundTask so iOS doesn't suspend
         // the app before the network request completes.
@@ -243,7 +243,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
     }
 
     func application(_ application: UIApplication, performFetchWithCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-        print("[AppDelegate] Background fetch triggered")
+        NSLog("[AppDelegate] Background fetch triggered")
 
         var bgTaskId: UIBackgroundTaskIdentifier = .invalid
         bgTaskId = application.beginBackgroundTask(withName: "BackgroundFetchHeartbeat") {
@@ -271,16 +271,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
     // Pass APNS token to Firebase, then forward the FCM token to Capacitor
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
         Messaging.messaging().apnsToken = deviceToken
-        print("APNS token passed to Firebase Messaging")
+        NSLog("APNS token passed to Firebase Messaging")
 
         // Request the FCM token and forward it to Capacitor's PushNotifications plugin
         Messaging.messaging().token(completion: { token, error in
             if let error = error {
-                print("Error getting FCM token: \(error)")
+                NSLog("Error getting FCM token: \(error)")
                 NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
             } else if let token = token {
-                print("=== FCM TOKEN (via didRegisterForRemoteNotifications) ===")
-                print("FCM Token: \(token)")
+                NSLog("=== FCM TOKEN (via didRegisterForRemoteNotifications) ===")
+                NSLog("FCM Token: \(token)")
                 // Post the FCM token (String) to Capacitor so the JS side receives the correct token
                 NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)
             }
@@ -288,7 +288,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
     }
 
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) {
-        print("Failed to register for remote notifications: \(error)")
+        NSLog("Failed to register for remote notifications: \(error)")
         // Forward the error to Capacitor's PushNotifications plugin
         NotificationCenter.default.post(name: .capacitorDidFailToRegisterForRemoteNotifications, object: error)
     }
@@ -296,8 +296,8 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
     // Firebase Messaging delegate - receives FCM token updates (including refresh)
     func messaging(_ messaging: Messaging, didReceiveRegistrationToken fcmToken: String?) {
         if let token = fcmToken {
-            print("=== FCM TOKEN RECEIVED (via MessagingDelegate) ===")
-            print("FCM Token: \(token)")
+            NSLog("=== FCM TOKEN RECEIVED (via MessagingDelegate) ===")
+            NSLog("FCM Token: \(token)")
             // Also post to Capacitor so the JS side gets token refresh updates
             NotificationCenter.default.post(name: .capacitorDidRegisterForRemoteNotifications, object: token)
         }

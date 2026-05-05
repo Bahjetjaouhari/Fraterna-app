@@ -1,0 +1,3 @@
+- [Android Audit 29 Apr](android-audit-april29.md) — 5 CRITICAL, 9 HIGH findings; NOT production ready. Key: stealth_mode bypass, unsecured GPS broadcast, fetch-all-locations query, no OkHttp timeouts
+- [User - Bahjet](user-bahjet.md) — Founder, needs business-impact explanations, privacy-first mindset
+- [Android Architecture](android-architecture.md) — Service patterns, token management, bridge gaps, proximity architecture

@@ -12,11 +12,15 @@ public class LocationServicePlugin: CAPPlugin {
     @objc func startLocationUpdates(_ call: CAPPluginCall) {
         guard let userId = call.getString("userId"),
               let authToken = call.getString("authToken") else {
+            NSLog("[LocationPlugin] ⚠️ startLocationUpdates called WITHOUT userId or authToken")
             call.reject("Missing userId or authToken")
             return
         }
 
+        NSLog("[LocationPlugin] startLocationUpdates called — userId=\(userId.prefix(8))..., tokenLen=\(authToken.count)")
+
         if LocationServicePlugin.sharedLocationManager == nil {
+            NSLog("[LocationPlugin] Creating new LocationManager instance")
             LocationServicePlugin.sharedLocationManager = LocationManager()
         }
 
@@ -25,6 +29,7 @@ public class LocationServicePlugin: CAPPlugin {
     }
 
     @objc func stopLocationUpdates(_ call: CAPPluginCall) {
+        NSLog("[LocationPlugin] stopLocationUpdates called")
         LocationServicePlugin.sharedLocationManager?.stopLocationUpdates()
         LocationServicePlugin.sharedLocationManager = nil
         call.resolve()
@@ -75,6 +80,7 @@ public class LocationServicePlugin: CAPPlugin {
             return
         }
         let userId = call.getString("userId")
+        NSLog("[LocationPlugin] updateAuthToken called — tokenLen=\(authToken.count)")
         LocationServicePlugin.sharedLocationManager?.updateAuthToken(authToken: authToken, userId: userId)
         call.resolve()
     }
