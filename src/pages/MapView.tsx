@@ -8,6 +8,8 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
 import { isUserOnline } from "@/utils/userStatus";
+import { Capacitor } from "@capacitor/core";
+import { Geolocation } from "@capacitor/geolocation";
 
 import maplibregl, { Map as MapLibreMap, Marker as MapLibreMarker, Popup as MapLibrePopup } from "maplibre-gl";
 
@@ -747,14 +749,22 @@ export const MapView: React.FC = () => {
   // Location update (con centrar)
   // -----------------------------
   const updateMyLocation = async ({ center }: { center: boolean }) => {
-    if (!user || !navigator.geolocation) {
+    if (!user) {
       toast.error("Geolocalización no disponible");
       return;
     }
 
     setIsUpdatingLocation(true);
 
-    const onSuccess = async (position: GeolocationPosition) => {
+    try {
+      // Use @capacitor/geolocation native plugin on native platforms,
+      // falls back to browser API on web. This avoids the "localhost" permission
+      // prompt from the WebView geolocation API on iOS/Android.
+      const position = await Geolocation.getCurrentPosition({
+        enableHighAccuracy: true,
+        timeout: 15000,
+      });
+
       const { latitude, longitude, accuracy } = position.coords;
 
       setMyLat(latitude);
@@ -762,54 +772,33 @@ export const MapView: React.FC = () => {
 
       if (center) centerOn(latitude, longitude);
 
-      const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy)));
+      const clampedAccuracy = Math.max(100, Math.min(300, Math.round(accuracy ?? 100)));
 
-      try {
-        // Send heartbeat FIRST to ensure user is "active" before location upsert
-        await supabase.from("profiles").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", user.id);
+      // Send heartbeat FIRST to ensure user is "active" before location upsert
+      await supabase.from("profiles").update({ last_heartbeat_at: new Date().toISOString() }).eq("id", user.id);
 
-        const { error } = await supabase
-          .from("locations")
-          .upsert(
-            {
-              user_id: user.id,
-              lat: latitude,
-              lng: longitude,
-              accuracy_meters: clampedAccuracy,
-              updated_at: new Date().toISOString(),
-            },
-            { onConflict: "user_id" }
-          );
-
-        if (error) throw error;
-
-        checkProximityAlerts(brothers);
-      } catch (e) {
-        console.error("Error updating location:", e);
-        toast.error("Error al actualizar ubicación");
-      } finally {
-        setIsUpdatingLocation(false);
-      }
-    };
-
-    // Primero intentar con alta precisión (GPS móvil)
-    navigator.geolocation.getCurrentPosition(
-      onSuccess,
-      (highAccErr) => {
-        // Si falla por timeout o posición no disponible, reintentar con baja precisión (WiFi/IP)
-        console.warn("High accuracy failed, retrying with low accuracy:", highAccErr.message);
-        navigator.geolocation.getCurrentPosition(
-          onSuccess,
-          (lowAccErr) => {
-            console.error("Geolocation error (both attempts):", lowAccErr);
-            toast.error("No se pudo obtener tu ubicación. Activa los servicios de ubicación de Windows.");
-            setIsUpdatingLocation(false);
+      const { error } = await supabase
+        .from("locations")
+        .upsert(
+          {
+            user_id: user.id,
+            lat: latitude,
+            lng: longitude,
+            accuracy_meters: clampedAccuracy,
+            updated_at: new Date().toISOString(),
           },
-          { enableHighAccuracy: false, timeout: 20000, maximumAge: 30000 }
+          { onConflict: "user_id" }
         );
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 15000 }
-    );
+
+      if (error) throw error;
+
+      checkProximityAlerts(brothers);
+    } catch (e) {
+      console.error("Error updating location:", e);
+      toast.error("No se pudo obtener tu ubicación. Verifica los permisos de ubicación.");
+    } finally {
+      setIsUpdatingLocation(false);
+    }
   };
 
   useEffect(() => {
