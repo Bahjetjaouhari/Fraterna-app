@@ -854,6 +854,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let urlString = "\(supabaseUrl)/rest/v1/locations?select=user_id,lat,lng,profile:profiles!locations_user_id_fkey(id,full_name,tracking_enabled,stealth_mode,last_heartbeat_at,proximity_alerts_enabled,proximity_radius_km)&lat=not.is.null&lng=not.is.null&user_id=neq.\(userId)&lat=gt.\(lat - radius)&lat=lt.\(lat + radius)&lng=gt.\(lng - radius)&lng=lt.\(lng + radius)"
 
         guard let url = URL(string: urlString) else {
+            NSLog("[LocationManager] ⚠️ checkProximityAlerts: INVALID URL")
             completion?()
             return
         }
@@ -862,7 +863,29 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
 
         URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
-            guard let self = self, let data = data, error == nil else {
+            guard let self = self else {
+                completion?()
+                return
+            }
+
+            if let error = error {
+                NSLog("[LocationManager] Proximity query error: \(error.localizedDescription)")
+                self.sendDebugLog("proximity_error", details: error.localizedDescription.prefix(100).description)
+                completion?()
+                return
+            }
+
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if statusCode >= 400 {
+                let body = data.flatMap { String(data: $0, encoding: .utf8)?.prefix(200) }.map(String.init) ?? "no body"
+                NSLog("[LocationManager] Proximity query failed: \(statusCode) - \(body)")
+                self.sendDebugLog("proximity_http_error", details: "status=\(statusCode)")
+                completion?()
+                return
+            }
+
+            guard let data = data else {
+                NSLog("[LocationManager] Proximity query: no data")
                 completion?()
                 return
             }
@@ -872,14 +895,18 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
             do {
                 guard let locationEntries = try JSONSerialization.jsonObject(with: data) as? [[String: Any]] else {
+                    NSLog("[LocationManager] Proximity query: not an array")
                     completion?()
                     return
                 }
+                NSLog("[LocationManager] Proximity query returned \(locationEntries.count) entries")
+                self.sendDebugLog("proximity_results", details: "count=\(locationEntries.count)")
                 for entry in locationEntries {
                     self.processProximityAlert(myLocation: location, entry: entry)
                 }
             } catch {
                 NSLog("[LocationManager] Proximity parse error: \(error)")
+                self.sendDebugLog("proximity_parse_error", details: error.localizedDescription.prefix(100).description)
             }
             completion?()
         }.resume()
@@ -887,24 +914,46 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     private func processProximityAlert(myLocation: CLLocation, entry: [String: Any]) {
         guard let theirLat = entry["lat"] as? Double,
-              let theirLng = entry["lng"] as? Double else { return }
+              let theirLng = entry["lng"] as? Double else {
+            NSLog("[LocationManager] Proximity: missing lat/lng in entry")
+            return
+        }
 
         guard let profile = entry["profile"] as? [String: Any],
-              let profileId = profile["id"] as? String else { return }
+              let profileId = profile["id"] as? String else {
+            NSLog("[LocationManager] Proximity: missing profile or profile.id — entry keys: \(entry.keys)")
+            sendDebugLog("proximity_no_profile", details: "keys=\(entry.keys.joined(separator: ",").prefix(80))")
+            return
+        }
 
         let theirTracking = profile["tracking_enabled"] as? Bool ?? false
-        if !theirTracking { return }
+        if !theirTracking {
+            NSLog("[LocationManager] Proximity: \(profileId) tracking disabled")
+            return
+        }
 
         let theirStealth = profile["stealth_mode"] as? Bool ?? false
-        if theirStealth { return }
+        if theirStealth {
+            NSLog("[LocationManager] Proximity: \(profileId) stealth mode")
+            return
+        }
 
-        guard let lastHeartbeat = profile["last_heartbeat_at"] as? String else { return }
+        guard let lastHeartbeat = profile["last_heartbeat_at"] as? String else {
+            NSLog("[LocationManager] Proximity: \(profileId) no last_heartbeat_at")
+            return
+        }
 
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-        guard let heartbeatDate = formatter.date(from: lastHeartbeat) else { return }
-        let fiveMinAgo = Date().addingTimeInterval(-300) // Match 5-minute threshold
-        guard heartbeatDate > fiveMinAgo else { return }
+        guard let heartbeatDate = formatter.date(from: lastHeartbeat) else {
+            NSLog("[LocationManager] Proximity: \(profileId) invalid heartbeat date")
+            return
+        }
+        let fiveMinAgo = Date().addingTimeInterval(-300)
+        guard heartbeatDate > fiveMinAgo else {
+            NSLog("[LocationManager] Proximity: \(profileId) heartbeat too old")
+            return
+        }
 
         let theirLocation = CLLocation(latitude: theirLat, longitude: theirLng)
         let distance = myLocation.distance(from: theirLocation) / 1000.0
@@ -914,12 +963,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let myRadius = proximityRadiusKm
         let alertRadius = min(myRadius, theirRadius)
 
-        guard distance <= alertRadius, theirAlerts else { return }
+        guard distance <= alertRadius, theirAlerts else {
+            NSLog("[LocationManager] Proximity: \(profileId) distance=\(String(format: "%.2f", distance))km > radius=\(alertRadius)km or theirAlerts=\(theirAlerts)")
+            return
+        }
 
         if let lastAlert = proximityCooldowns[profileId],
-           Date().timeIntervalSince(lastAlert) < 120 { return }
+           Date().timeIntervalSince(lastAlert) < 120 {
+            NSLog("[LocationManager] Proximity: \(profileId) cooldown active")
+            return
+        }
 
         proximityCooldowns[profileId] = Date()
+        NSLog("[LocationManager] ✓ SENDING proximity notification for \(profileId) at \(String(format: "%.2f", distance))km")
+        sendDebugLog("proximity_sent", details: "id=\(profileId.prefix(8)), dist=\(String(format: "%.2f", distance))km")
         sendProximityNotification(profileId: profileId, distance: distance)
     }
 
