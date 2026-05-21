@@ -3,7 +3,20 @@ import Capacitor
 import CoreLocation
 
 @objc(LocationServicePlugin)
-public class LocationServicePlugin: CAPPlugin {
+public class LocationServicePlugin: CAPPlugin, CAPBridgedPlugin {
+    public let identifier = "LocationServicePlugin"
+    public let jsName = "LocationService"
+    public let pluginMethods: [CAPPluginMethod] = [
+        CAPPluginMethod(name: "startLocationUpdates", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "stopLocationUpdates", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "isServiceRunning", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "getLastKnownLocation", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setTrackingEnabled", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setStealthMode", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setForegroundAccuracy", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "setBackgroundAccuracy", returnType: CAPPluginReturnPromise),
+        CAPPluginMethod(name: "updateAuthToken", returnType: CAPPluginReturnPromise)
+    ]
     // Use a static reference so the LocationManager survives plugin recreation
     // and remains active even when the webview/JS context is suspended.
     // Accessible from AppDelegate for cold-start restoration.

@@ -20,6 +20,7 @@
 		FRAT0001200000011 /* FirebaseMessaging in Frameworks */ = {isa = PBXBuildFile; productRef = FRAT0002200000011 /* FirebaseMessaging */; };
 		FRAT0001LOC0000001 /* LocationManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = FRAT0002LOC0000001 /* LocationManager.swift */; };
 		FRAT0001LOC0000002 /* LocationPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = FRAT0002LOC0000002 /* LocationPlugin.swift */; };
+		FRAT0001BRV0000001 /* FraternaBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = FRAT0002BRV0000001 /* FraternaBridgeViewController.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		FRAT0002200000001 /* GoogleService-Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = "GoogleService-Info.plist"; sourceTree = "<group>"; };
 		FRAT0002LOC0000001 /* LocationManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationManager.swift; sourceTree = "<group>"; };
 		FRAT0002LOC0000002 /* LocationPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LocationPlugin.swift; sourceTree = "<group>"; };
+		FRAT0002BRV0000001 /* FraternaBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FraternaBridgeViewController.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,6 +78,7 @@
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				FRAT0002LOC0000001 /* LocationManager.swift */,
 				FRAT0002LOC0000002 /* LocationPlugin.swift */,
+				FRAT0002BRV0000001 /* FraternaBridgeViewController.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
 				504EC30E1FED79650016851F /* Assets.xcassets */,
 				504EC3101FED79650016851F /* LaunchScreen.storyboard */,
@@ -174,6 +177,7 @@
 				504EC3081FED79650016851F /* AppDelegate.swift in Sources */,
 				FRAT0001LOC0000001 /* LocationManager.swift in Sources */,
 				FRAT0001LOC0000002 /* LocationPlugin.swift in Sources */,
+				FRAT0001BRV0000001 /* FraternaBridgeViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -316,7 +320,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = VL56K2J6DB;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
@@ -342,7 +346,7 @@
 				CODE_SIGN_ENTITLEMENTS = App/App.entitlements;
 				CODE_SIGN_IDENTITY = "Apple Development";
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 42;
+				CURRENT_PROJECT_VERSION = 44;
 				DEVELOPMENT_TEAM = VL56K2J6DB;
 				INFOPLIST_FILE = App/Info.plist;
 				IPHONEOS_DEPLOYMENT_TARGET = 15.0;
