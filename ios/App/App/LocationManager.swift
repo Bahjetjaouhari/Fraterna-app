@@ -19,6 +19,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private let heartbeatInterval: TimeInterval = 60 // 1 minute — fast enough for the 3-min online threshold
     private var lastHeartbeatTime: Date = .distantPast
     private var isInBackground: Bool = false
+    private var lastKnownLocation: CLLocation?
 
     // Background wiggle timer: periodically restarts location updates to force iOS
     // to deliver at least one location callback even for stationary devices.
@@ -343,6 +344,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
               let userId = userId,
               trackingEnabled else { return }
 
+        lastKnownLocation = location
+
         sendDebugLog("did_update_locations", details: "bg=\(isInBackground), accuracy=\(location.horizontalAccuracy)m, speed=\(location.speed)m/s")
 
         // This is the PRIMARY heartbeat mechanism.
@@ -485,6 +488,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             // Also send a direct heartbeat in case the location restart
             // doesn't trigger didUpdateLocations quickly enough.
             self.sendHeartbeatNow()
+
+            // Check proximity alerts using lastKnownLocation — critical for
+            // stationary devices where didUpdateLocations stops firing.
+            if let lastLoc = self.lastKnownLocation {
+                self.sendProximityCheck(location: lastLoc)
+            }
         }
         timer.resume()
         backgroundWiggleTimer = timer
@@ -536,6 +545,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
             self.sendHeartbeat(userId: userId, authToken: token)
+            // Also check proximity on every heartbeat cycle
+            if let lastLoc = self.lastKnownLocation {
+                self.checkProximityAlerts(userId: userId, authToken: token, location: lastLoc)
+            }
+        }
+    }
+
+    /// Send proximity check using lastKnownLocation. Called by wiggle timer
+    /// and on app resume when didUpdateLocations may not fire.
+    private func sendProximityCheck(location: CLLocation) {
+        guard let userId = userId else { return }
+        refreshTokenAsync { [weak self] in
+            guard let self = self, let token = self.authToken else { return }
+            self.checkProximityAlerts(userId: userId, authToken: token, location: location)
         }
     }
 
@@ -714,7 +737,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                         self.stealthMode = stealth
                         NSLog("[LocationManager] Stealth mode: \(stealth) — heartbeats continue regardless")
                     }
-                    if let radius = profile["proximity_radius_km"] as? Double {
+                    if let radius = jsonDouble(profile, key: "proximity_radius_km") {
                         self.proximityRadiusKm = radius
                     }
                     if let alerts = profile["proximity_alerts_enabled"] as? Bool {
@@ -841,6 +864,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     // MARK: - Proximity Alerts
 
+    /// Safely extract a Double from JSON — handles both Int and Double NSNumber
+    /// because PostgREST returns int4 columns as JSON integers (e.g., 1 not 1.0)
+    private func jsonDouble(_ dict: [String: Any], key: String) -> Double? {
+        if let d = dict[key] as? Double { return d }
+        if let i = dict[key] as? Int { return Double(i) }
+        return nil
+    }
+
     private func checkProximityAlerts(userId: String, authToken: String, location: CLLocation, completion: (() -> Void)? = nil) {
         guard proximityAlertsEnabled else {
             completion?()
@@ -876,6 +907,19 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             }
 
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if statusCode == 401 {
+                NSLog("[LocationManager] Proximity query got 401, refreshing token and retrying...")
+                self.sendDebugLog("proximity_401_retry", details: "refreshing")
+                self.refreshTokenAsync { [weak self] in
+                    guard let self = self, let newToken = self.authToken, newToken != authToken else {
+                        NSLog("[LocationManager] Proximity 401 retry: could not refresh token")
+                        completion?()
+                        return
+                    }
+                    self.checkProximityAlerts(userId: userId, authToken: newToken, location: location, completion: completion)
+                }
+                return
+            }
             if statusCode >= 400 {
                 let body = data.flatMap { String(data: $0, encoding: .utf8)?.prefix(200) }.map(String.init) ?? "no body"
                 NSLog("[LocationManager] Proximity query failed: \(statusCode) - \(body)")
@@ -958,7 +1002,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let theirLocation = CLLocation(latitude: theirLat, longitude: theirLng)
         let distance = myLocation.distance(from: theirLocation) / 1000.0
 
-        let theirRadius = profile["proximity_radius_km"] as? Double ?? 5.0
+        let theirRadius = jsonDouble(profile, key: "proximity_radius_km") ?? 5.0
         let theirAlerts = profile["proximity_alerts_enabled"] as? Bool ?? true
         let myRadius = proximityRadiusKm
         let alertRadius = min(myRadius, theirRadius)
@@ -969,21 +1013,26 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
 
         if let lastAlert = proximityCooldowns[profileId],
-           Date().timeIntervalSince(lastAlert) < 120 {
+           Date().timeIntervalSince(lastAlert) < 300 {
             NSLog("[LocationManager] Proximity: \(profileId) cooldown active")
             return
         }
 
         proximityCooldowns[profileId] = Date()
+        let fullName = profile["full_name"] as? String ?? "Un QH hermano"
         NSLog("[LocationManager] ✓ SENDING proximity notification for \(profileId) at \(String(format: "%.2f", distance))km")
         sendDebugLog("proximity_sent", details: "id=\(profileId.prefix(8)), dist=\(String(format: "%.2f", distance))km")
-        sendProximityNotification(profileId: profileId, distance: distance)
+        sendProximityNotification(profileId: profileId, fullName: fullName, distance: distance)
     }
 
-    private func sendProximityNotification(profileId: String, distance: Double) {
+    private func sendProximityNotification(profileId: String, fullName: String, distance: Double) {
         let content = UNMutableNotificationContent()
         content.title = "QH Cerca"
-        content.body = String(format: "Un QH hermano está a %.1f km de ti", distance)
+        if distance < 1.0 {
+            content.body = String(format: "%@ está a %.0f m de ti", fullName, distance * 1000)
+        } else {
+            content.body = String(format: "%@ está a %.1f km de ti", fullName, distance)
+        }
         content.sound = .default
         content.categoryIdentifier = "proximity"
 
