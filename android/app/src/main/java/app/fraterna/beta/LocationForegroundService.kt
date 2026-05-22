@@ -1122,6 +1122,12 @@ class LocationForegroundService : Service() {
                                 val brotherId = profileObj.optString("id", "")
                                 val brotherName = profileObj.optString("full_name", "Un QH")
 
+                                // Skip self — never notify about your own location
+                                if (brotherId == currentUserId) {
+                                    android.util.Log.d("LocationService", "Proximity: skipping self (brotherId=$brotherId)")
+                                    continue
+                                }
+
                                 val now = System.currentTimeMillis()
                                 val lastNotified = proximityCooldowns[brotherId] ?: 0L
 

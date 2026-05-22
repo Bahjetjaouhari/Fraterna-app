@@ -1038,6 +1038,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             return
         }
 
+        // Skip self — never notify about your own location
+        if let myId = userId, profileId == myId {
+            NSLog("[LocationManager] Proximity: skipping self (profileId=\(profileId.prefix(8)), myId=\(myId.prefix(8)))")
+            return
+        }
+
         let theirTracking = profile["tracking_enabled"] as? Bool ?? false
         if !theirTracking {
             NSLog("[LocationManager] Proximity: \(profileId) tracking disabled")

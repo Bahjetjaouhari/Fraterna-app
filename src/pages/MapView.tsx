@@ -305,6 +305,7 @@ export const MapView: React.FC = () => {
     for (const b of list) {
       if (typeof b.lat !== "number" || typeof b.lng !== "number") continue;
       if (b.profile?.stealth_mode) continue;
+      if (b.user_id === profile.id) continue; // Skip self
 
       const dist = haversineDistance(myLat, myLng, b.lat, b.lng);
       if (dist <= radiusKm) {
