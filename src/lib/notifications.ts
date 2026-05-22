@@ -5,6 +5,7 @@ type NotificationType =
   | 'global_message'
   | 'friend_request'
   | 'friend_accepted'
+  | 'proximity_alert'
   | 'test';
 
 interface NotificationData {
@@ -15,6 +16,9 @@ interface NotificationData {
   // Friend requests
   from_user_id?: string;
   to_user_id?: string;
+
+  // Proximity alert
+  from_name?: string;
 
   // Test
   token?: string;
@@ -115,6 +119,22 @@ export async function sendFriendAcceptedNotification(
   return sendPushNotification('friend_accepted', {
     from_user_id: accepterUserId,
     to_user_id: originalRequesterUserId,
+  });
+}
+
+/**
+ * Send proximity alert push notification to a nearby QH
+ * Called from native code when a proximity check detects a nearby user
+ */
+export async function sendProximityAlertNotification(
+  fromUserId: string,
+  fromName: string,
+  toUserId: string
+): Promise<{ success: boolean; sent?: number; error?: string }> {
+  return sendPushNotification('proximity_alert', {
+    from_user_id: fromUserId,
+    from_name: fromName,
+    to_user_id: toUserId,
   });
 }
 
