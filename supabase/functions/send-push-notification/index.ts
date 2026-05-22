@@ -23,6 +23,7 @@ function getChannelId(type: string): string {
     case 'global_message':
     case 'friend_request':
     case 'friend_accepted':
+    case 'proximity_alert':
       return 'messages'
     default:
       return 'default'
@@ -432,6 +433,57 @@ serve(async (req) => {
       }
 
       console.log('[FRIEND_ACCEPTED] Notifications to send:', notifications.length)
+    }
+
+    // ========================================
+    // PROXIMITY ALERT - Notify a nearby QH
+    // ========================================
+    else if (type === 'proximity_alert') {
+      const { from_user_id, from_name, to_user_id } = data
+
+      console.log('[PROXIMITY] From:', from_user_id, 'To:', to_user_id)
+
+      // Get recipient's push token and proximity settings
+      const { data: recipient, error: recipientError } = await supabase
+        .from('profiles')
+        .select('push_token, proximity_alerts_enabled')
+        .eq('id', to_user_id)
+        .single()
+
+      if (recipientError) {
+        console.error('[PROXIMITY] Error fetching recipient:', recipientError)
+        return new Response(JSON.stringify({ error: 'Failed to fetch recipient' }), {
+          status: 500,
+          headers: corsHeaders,
+        })
+      }
+
+      // Skip if recipient has proximity alerts disabled
+      if (recipient?.proximity_alerts_enabled === false) {
+        console.log('[PROXIMITY] Recipient has proximity alerts disabled, skipping')
+        return new Response(JSON.stringify({ success: true, sent: 0, skipped: true, reason: 'alerts_disabled' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
+      if (recipient?.push_token) {
+        notifications.push({
+          token: recipient.push_token,
+          title: 'QH Cerca',
+          body: `${from_name || 'Un QH'} está cerca de ti`,
+          type: 'proximity_alert',
+          badgeCount: 0,
+          data: {
+            type: 'proximity_alert',
+            from_user_id: from_user_id,
+            from_name: from_name || 'Un QH',
+          },
+        })
+      } else {
+        console.log('[PROXIMITY] Recipient has no push token, skipping')
+      }
+
+      console.log('[PROXIMITY] Notifications to send:', notifications.length)
     }
 
     // ========================================
