@@ -1134,7 +1134,10 @@ class LocationForegroundService : Service() {
                                 if (now - lastNotified >= PROXIMITY_COOLDOWN_MS) {
                                     proximityCooldowns[brotherId] = now
                                     showProximityNotification(brotherName, distance, radiusKm)
-                                    sendProximityPushNotification(brotherId, brotherName)
+                                    // Send push to the OTHER user telling them WE are nearby.
+                                    // from_name must be OUR name, not the other user's name.
+                                    val myName = currentUserName ?: "Un QH"
+                                    sendProximityPushNotification(brotherId, myName)
                                 }
                             }
                         }

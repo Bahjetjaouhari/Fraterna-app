@@ -443,6 +443,14 @@ serve(async (req) => {
 
       console.log('[PROXIMITY] From:', from_user_id, 'To:', to_user_id)
 
+      // Block self-notifications (defense-in-depth, client should also filter)
+      if (from_user_id === to_user_id) {
+        console.log('[PROXIMITY] Skipping self-notification: from and to are the same user')
+        return new Response(JSON.stringify({ success: true, sent: 0, skipped: true, reason: 'self_notification' }), {
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+        })
+      }
+
       // Get recipient's push token and proximity settings
       const { data: recipient, error: recipientError } = await supabase
         .from('profiles')

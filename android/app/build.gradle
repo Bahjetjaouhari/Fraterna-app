@@ -8,8 +8,8 @@ android {
         applicationId "app.fraterna.beta"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 54
-        versionName "3.27"
+        versionCode 55
+        versionName "3.28"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
 
         // Supabase config from local.properties (not committed to git)
