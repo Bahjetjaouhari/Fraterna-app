@@ -134,6 +134,9 @@ class LocationForegroundService : Service() {
         @Volatile
         var backgroundMode: Boolean = false
 
+        @Volatile
+        var stealthModeFromJS: Boolean = false
+
         fun isServiceRunning(): Boolean = isRunning
 
         fun start(context: Context, authToken: String? = null, userId: String? = null) {
@@ -162,7 +165,7 @@ class LocationForegroundService : Service() {
         }
 
         fun setStealthMode(enabled: Boolean) {
-            stealthMode = enabled
+            stealthModeFromJS = enabled
         }
 
         fun updateBackgroundMode(bg: Boolean) {
@@ -228,8 +231,9 @@ class LocationForegroundService : Service() {
     private var profileSettings: ProfileSettings? = null
 
     // Privacy flags — checked before uploading location
-    @Volatile
-    private var stealthMode: Boolean = false
+    private var stealthMode: Boolean
+        get() = Companion.stealthModeFromJS
+        set(value) { Companion.stealthModeFromJS = value }
     @Volatile
     private var trackingEnabledFromProfile: Boolean = true
 
