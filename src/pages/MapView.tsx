@@ -299,7 +299,7 @@ export const MapView: React.FC = () => {
     if (radiusKm === 0) return;
     if (myLat == null || myLng == null) return;
 
-    const COOLDOWN_MS = 2 * 60 * 1000;
+    const COOLDOWN_MS = 5 * 60 * 1000; // 5-minute cooldown per user (matches native)
     const now = Date.now();
 
     for (const b of list) {
