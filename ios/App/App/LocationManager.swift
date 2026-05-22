@@ -20,6 +20,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var lastHeartbeatTime: Date = .distantPast
     private var isInBackground: Bool = false
     private var lastKnownLocation: CLLocation?
+    private var isGPSEnabledByMovement = false
+    private var gpsWindowTimer: DispatchSourceTimer?
+    private let gpsWindowDuration: TimeInterval = 15 // seconds to keep GPS active after movement
+    private var currentUserName: String?
 
     // Background wiggle timer: periodically restarts location updates to force iOS
     // to deliver at least one location callback even for stationary devices.
@@ -57,8 +61,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         locationManager.delegate = self
         locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = true
-        locationManager.pausesLocationUpdatesAutomatically = false
+        locationManager.showsBackgroundLocationIndicator = false
+        locationManager.pausesLocationUpdatesAutomatically = true
         locationManager.activityType = .otherNavigation
 
         // iOS 18+ requires CLServiceSession for background location in release builds
@@ -251,77 +255,68 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // JS bridge calls these, but the native NotificationCenter observers
     // are the authoritative source for accuracy transitions.
     func setForegroundAccuracy() {
+        isInBackground = false
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.startUpdatingLocation()
+        locationManager.startMonitoringSignificantLocationChanges()
+        locationManager.startMonitoringVisits()
+        cancelGPSWindowTimer()
+        isGPSEnabledByMovement = false
     }
 
     func setBackgroundAccuracy() {
-        // Use kCLLocationAccuracyBest in background to KEEP THE GPS ACTIVE.
-        // Lower accuracy (NearestTenMeters) allows iOS to throttle updates for
-        // stationary devices, causing didUpdateLocations to stop firing.
-        // Higher accuracy forces iOS to keep GPS hardware active and deliver
-        // frequent updates, which triggers heartbeats via didUpdateLocations.
-        // This is how Android's ForegroundService stays online — the process
-        // never sleeps, and GPS is always active.
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        // Ensure heartbeat is running in background
-        if heartbeatTimer == nil {
-            startHeartbeatTimer()
+        // In hybrid mode, background uses significant location changes only.
+        // GPS is started briefly when movement is detected (see startGPSWindowForMovement).
+        isInBackground = true
+        if !isGPSEnabledByMovement {
+            locationManager.stopUpdatingLocation()
+            locationManager.startMonitoringSignificantLocationChanges()
+            locationManager.startMonitoringVisits()
         }
     }
 
     // MARK: - Native foreground/background observers
     // These fire regardless of whether the Capacitor webview is alive.
 
-    @objc private func appDidEnterBackground() {
+    @objc func appDidEnterBackground() {
         isInBackground = true
         NSLog("[LocationManager] App entered background (native)")
-        sendDebugLog("app_background", details: "accuracy=\(locationManager.desiredAccuracy)")
+        sendDebugLog("app_background", details: "switching_to_significant_changes")
         if let uid = userId {
             writeImmediateDebugEvent("native_bg_v39", userId: uid)
         }
-        // Switch to best accuracy for background — this keeps GPS active
-        // and forces iOS to deliver frequent location updates even when stationary.
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        // Ensure heartbeat timer is running
-        if heartbeatTimer == nil {
-            startHeartbeatTimer()
-        }
 
-        // Start the background wiggle timer — periodically restarts location
-        // updates to force iOS to deliver at least one callback even for
-        // stationary devices. This is the key mechanism for keeping heartbeats
-        // alive when didUpdateLocations stops firing.
-        startBackgroundWiggleTimer()
+        // Stop continuous GPS — use significant location changes in background
+        locationManager.stopUpdatingLocation()
 
-        // Send an immediate heartbeat using a UIBackgroundTask to ensure iOS
-        // doesn't suspend us before the network call completes.
-        // Then schedule a second heartbeat 30s later during the grace period.
+        // Ensure significant location changes and visit monitoring stay active
+        locationManager.startMonitoringSignificantLocationChanges()
+        locationManager.startMonitoringVisits()
+
+        // Start heartbeat timer as backup
+        startHeartbeatTimer()
+
+        // Send immediate heartbeat to maintain active status
         sendHeartbeatNow()
-        var graceTaskId: UIBackgroundTaskIdentifier = .invalid
-        graceTaskId = UIApplication.shared.beginBackgroundTask(withName: "BackgroundGraceHeartbeat") { [weak self] in
-            self?.endBackgroundTask(graceTaskId)
-        }
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) { [weak self] in
-            self?.sendHeartbeatNow()
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) { [weak self] in
-                self?.endBackgroundTask(graceTaskId)
-            }
-        }
+
+        NSLog("[LocationManager] Background mode: significant location changes + visits only")
     }
 
-    @objc private func appDidBecomeActive() {
+    @objc func appDidBecomeActive() {
         isInBackground = false
         NSLog("[LocationManager] App became active (native)")
         sendDebugLog("app_foreground")
-        // Switch to high accuracy in foreground for precise tracking
+
+        // Restart full GPS for foreground
         locationManager.desiredAccuracy = kCLLocationAccuracyBest
         locationManager.distanceFilter = kCLDistanceFilterNone
-        // Stop the wiggle timer — not needed in foreground
-        stopBackgroundWiggleTimer()
-        // Send immediate heartbeat on resume to update status quickly
+        locationManager.startUpdatingLocation()
+
+        // Cancel any GPS window timer (we're in foreground now)
+        cancelGPSWindowTimer()
+
+        // Send immediate heartbeat
         sendHeartbeatNow()
     }
 
@@ -340,11 +335,17 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // MARK: - CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
-        guard let location = locations.last,
-              let userId = userId,
-              trackingEnabled else { return }
-
+        guard let location = locations.last else { return }
         lastKnownLocation = location
+
+        // In background, only process location updates during GPS windows triggered by movement
+        if isInBackground && !isGPSEnabledByMovement {
+            // Location update from significant location changes — start GPS window
+            // and process this location
+            startGPSWindowForMovement()
+        }
+
+        guard let userId = userId, trackingEnabled else { return }
 
         sendDebugLog("did_update_locations", details: "bg=\(isInBackground), accuracy=\(location.horizontalAccuracy)m, speed=\(location.speed)m/s")
 
@@ -412,12 +413,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
-        // This should NOT be called because pausesLocationUpdatesAutomatically = false.
-        // But if it is, restart updates immediately and start the heartbeat timer
-        // to keep the user online.
-        NSLog("[LocationManager] ⚠️ Location updates PAUSED — restarting immediately")
+        NSLog("[LocationManager] ⚠️ Location updates PAUSED by iOS")
         sendDebugLog("location_paused_restart")
-        manager.startUpdatingLocation()
+        if isInBackground {
+            startGPSWindowForMovement()
+        } else {
+            manager.startUpdatingLocation()
+        }
         startHeartbeatTimer()
     }
 
@@ -434,6 +436,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard let userId = userId, trackingEnabled else { return }
         NSLog("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
         sendDebugLog("visit_detected", details: "arriving=\(visit.arrivalDate)")
+
+        // Start GPS window to get precise location for proximity check
+        if isInBackground {
+            startGPSWindowForMovement()
+        }
 
         // Protect with UIBackgroundTask so iOS doesn't suspend before network completes
         var bgTaskId: UIBackgroundTaskIdentifier = .invalid
@@ -506,6 +513,53 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         backgroundWiggleTimer = nil
     }
 
+    // MARK: - GPS Window for Movement Detection
+    // When a significant location change or visit is detected in background,
+    // briefly start GPS to get precise location for proximity checks and heartbeat.
+
+    private func startGPSWindowForMovement() {
+        guard isInBackground else { return }
+
+        NSLog("[LocationManager] Starting GPS window for movement detection (15s)")
+        sendDebugLog("gps_window_start", details: "movement_detected")
+
+        isGPSEnabledByMovement = true
+        locationManager.desiredAccuracy = kCLLocationAccuracyBest
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.startUpdatingLocation()
+
+        // Cancel existing timer if any
+        cancelGPSWindowTimer()
+
+        // Schedule timer to stop GPS after the window duration
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + gpsWindowDuration, leeway: .seconds(2))
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            self.endGPSWindow()
+        }
+        timer.resume()
+        gpsWindowTimer = timer
+    }
+
+    private func endGPSWindow() {
+        guard isInBackground else { return }
+
+        NSLog("[LocationManager] Ending GPS window — switching to significant changes only")
+        sendDebugLog("gps_window_end", details: "stopping_gps")
+        isGPSEnabledByMovement = false
+        locationManager.stopUpdatingLocation()
+
+        // Keep significant location changes and visits active
+        locationManager.startMonitoringSignificantLocationChanges()
+        locationManager.startMonitoringVisits()
+    }
+
+    private func cancelGPSWindowTimer() {
+        gpsWindowTimer?.cancel()
+        gpsWindowTimer = nil
+    }
+
     // MARK: - Heartbeat Timer
     // This timer ONLY fires when the app is not suspended (foreground or briefly
     // awakened by location updates). It's a backup for the primary mechanism
@@ -549,6 +603,17 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let lastLoc = self.lastKnownLocation {
                 self.checkProximityAlerts(userId: userId, authToken: token, location: lastLoc)
             }
+        }
+    }
+
+    /// Called when the app is woken by a push notification or BGProcessingTask.
+    /// Uses lastKnownLocation if available, or starts a brief GPS window.
+    func sendProximityCheckFromPush() {
+        guard let userId = userId else { return }
+        if let location = lastKnownLocation {
+            sendProximityCheck(location: location)
+        } else if isInBackground {
+            startGPSWindowForMovement()
         }
     }
 
@@ -701,7 +766,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
 
-            let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled"
+            let urlString = "\(self.supabaseUrl)/rest/v1/profiles?id=eq.\(userId)&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled,full_name"
             guard let url = URL(string: urlString) else { return }
             var request = URLRequest(url: url)
             request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -742,6 +807,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     }
                     if let alerts = profile["proximity_alerts_enabled"] as? Bool {
                         self.proximityAlertsEnabled = alerts
+                    }
+                    if let name = profile["full_name"] as? String {
+                        self.currentUserName = name
                     }
                 } catch {
                     NSLog("[LocationManager] Error loading profile settings: \(error)")
@@ -1023,6 +1091,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] ✓ SENDING proximity notification for \(profileId) at \(String(format: "%.2f", distance))km")
         sendDebugLog("proximity_sent", details: "id=\(profileId.prefix(8)), dist=\(String(format: "%.2f", distance))km")
         sendProximityNotification(profileId: profileId, fullName: fullName, distance: distance)
+        sendProximityPushNotification(toUserId: profileId, distance: distance)
     }
 
     private func sendProximityNotification(profileId: String, fullName: String, distance: Double) {
@@ -1038,6 +1107,47 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         let request = UNNotificationRequest(identifier: "proximity-\(profileId)", content: content, trigger: nil)
         UNUserNotificationCenter.current().add(request)
+    }
+
+    private func sendProximityPushNotification(toUserId: String, distance: Double) {
+        guard let authToken = authToken, let myUserId = userId else { return }
+        let fromName = currentUserName ?? "Un QH"
+
+        let urlString = "\(supabaseUrl)/functions/v1/send-push-notification"
+        guard let url = URL(string: urlString) else { return }
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
+        request.setValue(supabaseAnonKey, forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: Any] = [
+            "type": "proximity_alert",
+            "data": [
+                "from_user_id": myUserId,
+                "from_name": fromName,
+                "to_user_id": toUserId
+            ]
+        ]
+
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: body) else { return }
+        request.httpBody = httpBody
+
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            if let error = error {
+                NSLog("[LocationManager] Proximity push error: \(error.localizedDescription)")
+                return
+            }
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            if statusCode >= 200 && statusCode < 300 {
+                NSLog("[LocationManager] ✓ Proximity push sent to \(toUserId.prefix(8))")
+                self.sendDebugLog("proximity_push_sent", details: "to=\(toUserId.prefix(8))")
+            } else {
+                NSLog("[LocationManager] Proximity push failed: \(statusCode)")
+                self.sendDebugLog("proximity_push_error", details: "status=\(statusCode)")
+            }
+        }.resume()
     }
 
     // MARK: - Debug Logging
