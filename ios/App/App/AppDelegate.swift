@@ -71,6 +71,9 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         // Also set background accuracy for ongoing location updates
         locationManager?.setBackgroundAccuracy()
 
+        // Also check proximity in background task
+        locationManager?.sendProximityCheckFromPush()
+
         // Tell iOS we're done — use a short delay to let network calls complete
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
             task.setTaskCompleted(success: true)
@@ -217,6 +220,10 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
 
         // Send heartbeat immediately — this keeps the user "online"
         LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
+
+        // Check proximity when woken by push — the moving user's app
+        // may have sent a push, so the stationary user should check too
+        LocationServicePlugin.sharedLocationManager?.sendProximityCheckFromPush()
 
         // Schedule a second heartbeat 10 seconds later to ensure the server
         // receives the update even if the first attempt had network latency.
