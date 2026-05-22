@@ -222,6 +222,9 @@ class LocationForegroundService : Service() {
         get() = Companion.bearerToken
         set(value) { Companion.bearerToken = value }
     @Volatile
+    private var currentUserName: String? = null
+
+    @Volatile
     private var profileSettings: ProfileSettings? = null
 
     // Privacy flags — checked before uploading location
@@ -232,7 +235,7 @@ class LocationForegroundService : Service() {
 
     // Proximity alert tracking (thread-safe)
     private val proximityCooldowns = ConcurrentHashMap<String, Long>()
-    private val PROXIMITY_COOLDOWN_MS = 2 * 60 * 1000L // 2 minutes
+    private val PROXIMITY_COOLDOWN_MS = 5 * 60 * 1000L // 5 minutes
 
     // Profile settings cache TTL (avoid fetching every 15s)
     @Volatile
@@ -784,7 +787,7 @@ class LocationForegroundService : Service() {
         serviceScope.launch {
             try {
                 val request = Request.Builder()
-                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled")
+                    .url("$supabaseUrl/rest/v1/profiles?id=eq.$userId&select=proximity_radius_km,proximity_alerts_enabled,stealth_mode,tracking_enabled,full_name")
                     .addHeader("Authorization", "Bearer $token")
                     .addHeader("apikey", supabaseAnonKey)
                     .get()
@@ -799,6 +802,7 @@ class LocationForegroundService : Service() {
                             val profile = jsonArray.getJSONObject(0)
                             val radius = profile.optDouble("proximity_radius_km", 5.0)
                             val enabled = profile.optBoolean("proximity_alerts_enabled", true)
+                            currentUserName = profile.optString("full_name", null)
                             stealthMode = profile.optBoolean("stealth_mode", false)
                             trackingEnabledFromProfile = profile.optBoolean("tracking_enabled", true)
 
@@ -1120,6 +1124,7 @@ class LocationForegroundService : Service() {
                                 if (now - lastNotified >= PROXIMITY_COOLDOWN_MS) {
                                     proximityCooldowns[brotherId] = now
                                     showProximityNotification(brotherName, distance, radiusKm)
+                                    sendProximityPushNotification(brotherId, brotherName)
                                 }
                             }
                         }
@@ -1163,6 +1168,41 @@ class LocationForegroundService : Service() {
 
         notificationManager.notify(notificationIdCounter.getAndIncrement(), notification)
         android.util.Log.d("LocationService", "Proximity notification shown for $brotherName")
+    }
+
+    private fun sendProximityPushNotification(toUserId: String, fromName: String) {
+        val token = bearerToken ?: return
+        val myUserId = currentUserId ?: return
+
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                val jsonBody = org.json.JSONObject().apply {
+                    put("type", "proximity_alert")
+                    put("data", org.json.JSONObject().apply {
+                        put("from_user_id", myUserId)
+                        put("from_name", fromName)
+                        put("to_user_id", toUserId)
+                    })
+                }
+
+                val request = Request.Builder()
+                    .url("$supabaseUrl/functions/v1/send-push-notification")
+                    .addHeader("Authorization", "Bearer $token")
+                    .addHeader("apikey", supabaseAnonKey)
+                    .addHeader("Content-Type", "application/json")
+                    .post(jsonBody.toString().toRequestBody("application/json".toMediaType()))
+                    .build()
+
+                val response = httpClient.newCall(request).execute()
+                if (response.isSuccessful) {
+                    android.util.Log.d("LocationService", "Proximity push sent to $toUserId")
+                } else {
+                    android.util.Log.e("LocationService", "Proximity push failed: ${response.code}")
+                }
+            } catch (e: Exception) {
+                android.util.Log.e("LocationService", "Proximity push error: ${e.message}")
+            }
+        }
     }
 
     private fun scheduleRestart() {

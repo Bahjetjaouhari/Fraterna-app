@@ -22,8 +22,8 @@ class MainActivity : BridgeActivity() {
 
         super.onCreate(savedInstanceState)
 
-        // Clear only proximity and message notifications (not the foreground service notification)
-        clearNonServiceNotifications()
+        // Don't clear proximity notifications on app start — they are time-sensitive
+        // and should persist until dismissed by the user.
 
         // Explicitly initialize Firebase and log status
         try {
@@ -51,7 +51,8 @@ class MainActivity : BridgeActivity() {
 
     override fun onResume() {
         super.onResume()
-        clearNonServiceNotifications()
+        // Don't clear proximity notifications when returning to the app.
+        // They are time-sensitive and should persist until dismissed by the user.
     }
 
     /**
