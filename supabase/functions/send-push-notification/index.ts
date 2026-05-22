@@ -439,9 +439,9 @@ serve(async (req) => {
     // PROXIMITY ALERT - Notify a nearby QH
     // ========================================
     else if (type === 'proximity_alert') {
-      const { from_user_id, from_name, to_user_id } = data
+      const { from_user_id, from_name: clientFromName, to_user_id } = data
 
-      console.log('[PROXIMITY] From:', from_user_id, 'To:', to_user_id)
+      console.log('[PROXIMITY] FULL DATA:', JSON.stringify({ from_user_id, from_name: clientFromName, to_user_id }))
 
       // Block self-notifications (defense-in-depth, client should also filter)
       if (from_user_id === to_user_id) {
@@ -450,6 +450,16 @@ serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         })
       }
+
+      // ALWAYS use the sender's real profile name from DB, not the client-provided name.
+      // This fixes the bug where Android was sending the recipient's name instead of the sender's name.
+      const { data: senderProfile } = await supabase
+        .from('profiles')
+        .select('full_name')
+        .eq('id', from_user_id)
+        .single()
+      const from_name = senderProfile?.full_name || clientFromName || 'Un QH'
+      console.log('[PROXIMITY] Sender DB name:', senderProfile?.full_name, '| Client sent:', clientFromName, '| Using:', from_name)
 
       // Get recipient's push token and proximity settings
       const { data: recipient, error: recipientError } = await supabase
@@ -478,13 +488,13 @@ serve(async (req) => {
         notifications.push({
           token: recipient.push_token,
           title: 'QH Cerca',
-          body: `${from_name || 'Un QH'} está cerca de ti`,
+          body: `${from_name} está cerca de ti`,
           type: 'proximity_alert',
           badgeCount: 0,
           data: {
             type: 'proximity_alert',
             from_user_id: from_user_id,
-            from_name: from_name || 'Un QH',
+            from_name: from_name,
           },
         })
       } else {
