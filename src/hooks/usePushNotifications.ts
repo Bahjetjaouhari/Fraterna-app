@@ -123,6 +123,14 @@ export const usePushNotifications = () => {
         // Show notification payload if the app is open
         await PushNotifications.addListener('pushNotificationReceived', (notification: PushNotificationSchema) => {
           console.log('Push received: ' + JSON.stringify(notification));
+
+          // Log proximity alerts specifically for debugging
+          const notifData = notification.data || {};
+          const notifType = typeof notifData === 'object' ? (notifData as Record<string, unknown>).type : undefined;
+          if (notifType === 'proximity_alert') {
+            console.log('[PushNotifications] Proximity alert received in foreground:', notification.data);
+          }
+
           toast(notification.title || 'New Notification', {
             description: notification.body || '',
           });
@@ -131,6 +139,15 @@ export const usePushNotifications = () => {
         // Method called when tapping on a notification
         await PushNotifications.addListener('pushNotificationActionPerformed', async (notification: ActionPerformed) => {
           console.log('Push action performed: ' + JSON.stringify(notification));
+
+          // Navigate to map view when user taps a proximity alert
+          const notifData = notification.notification.data || {};
+          const notifType = typeof notifData === 'object' ? (notifData as Record<string, unknown>).type : undefined;
+          if (notifType === 'proximity_alert') {
+            console.log('[PushNotifications] Proximity alert tapped — navigating to map');
+            window.dispatchEvent(new CustomEvent('fraterna:navigate-map'));
+          }
+
           // Update badge to current unread count instead of clearing to 0
           if (session?.user?.id) {
             await updateBadgeToUnreadCount(session.user.id);
