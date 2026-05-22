@@ -64,12 +64,11 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             restoreLocationManagerFromStorage()
         }
 
-        // Send heartbeat
         let locationManager = LocationServicePlugin.sharedLocationManager
-        locationManager?.sendHeartbeatNow()
 
-        // Also set background accuracy for ongoing location updates
-        locationManager?.setBackgroundAccuracy()
+        // "Pulse" mode: briefly restart GPS, send heartbeat
+        locationManager?.pulseLocationUpdate()
+        locationManager?.sendHeartbeatNow()
 
         // Also check proximity in background task
         locationManager?.sendProximityCheckFromPush()
@@ -215,24 +214,23 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             restoreLocationManagerFromStorage()
         }
 
-        // Ensure background accuracy mode is active
-        LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
+        // "Pulse" mode: briefly restart GPS at low accuracy when woken by push.
+        // This forces iOS to deliver at least one location callback → heartbeat.
+        // The arrow appears briefly, then iOS pauses GPS again when stationary.
+        LocationServicePlugin.sharedLocationManager?.pulseLocationUpdate()
 
         // Send heartbeat immediately — this keeps the user "online"
         LocationServicePlugin.sharedLocationManager?.sendHeartbeatNow()
 
-        // Check proximity when woken by push — the moving user's app
-        // may have sent a push, so the stationary user should check too
+        // Check proximity when woken by push
         LocationServicePlugin.sharedLocationManager?.sendProximityCheckFromPush()
 
-        // Schedule a second heartbeat 10 seconds later to ensure the server
-        // receives the update even if the first attempt had network latency.
+        // Schedule completion after 10s to let network calls finish
         DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
             self?.endSilentPushBackgroundTask(bgTaskId, completionHandler: completionHandler)
         }
 
-        // Also schedule a follow-up heartbeat 15 seconds after the push
-        // (before the background task expires at 25s)
+        // Follow-up heartbeat 15s after push (before background task expires)
         var followUpTaskId: UIBackgroundTaskIdentifier = .invalid
         followUpTaskId = application.beginBackgroundTask(withName: "SilentPushFollowUp") {
             UIApplication.shared.endBackgroundTask(followUpTaskId)

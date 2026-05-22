@@ -130,7 +130,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
         // Include build number so we can verify which build is actually running
-        writeImmediateDebugEvent("native_v39_start", userId: userId)
+        writeImmediateDebugEvent("native_v40_start", userId: userId)
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -266,14 +266,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func setBackgroundAccuracy() {
-        // In hybrid mode, background uses significant location changes only.
-        // GPS is started briefly when movement is detected (see startGPSWindowForMovement).
+        // "Pulse" mode: GPS at low accuracy in background.
+        // iOS delivers callbacks while active, then PAUSES when device is stationary.
+        // When paused, the arrow disappears and app may suspend.
+        // Silent pushes from cron wake the app → brief GPS restart → heartbeat → pause again.
         isInBackground = true
-        if !isGPSEnabledByMovement {
-            locationManager.stopUpdatingLocation()
-            locationManager.startMonitoringSignificantLocationChanges()
-            locationManager.startMonitoringVisits()
-        }
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.startUpdatingLocation()
+        locationManager.startMonitoringSignificantLocationChanges()
+        locationManager.startMonitoringVisits()
     }
 
     // MARK: - Native foreground/background observers
@@ -282,25 +284,30 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     @objc func appDidEnterBackground() {
         isInBackground = true
         NSLog("[LocationManager] App entered background (native)")
-        sendDebugLog("app_background", details: "switching_to_significant_changes")
+        sendDebugLog("app_background", details: "switching_to_pulse_mode")
         if let uid = userId {
-            writeImmediateDebugEvent("native_bg_v39", userId: uid)
+            writeImmediateDebugEvent("native_bg_v40", userId: uid)
         }
 
-        // Stop continuous GPS — use significant location changes in background
-        locationManager.stopUpdatingLocation()
+        // "Pulse" mode: GPS at low accuracy in background.
+        // iOS delivers callbacks while active, then PAUSES when stationary.
+        // pausesLocationUpdatesAutomatically = true → iOS pauses GPS → arrow disappears.
+        // Silent pushes wake the app for brief GPS + heartbeat → arrow flashes → pause again.
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.startUpdatingLocation()
 
-        // Ensure significant location changes and visit monitoring stay active
+        // Keep significant location changes and visit monitoring as additional wakeup triggers
         locationManager.startMonitoringSignificantLocationChanges()
         locationManager.startMonitoringVisits()
 
-        // Start heartbeat timer as backup
+        // Start heartbeat timer as backup (fires while app is alive, suspends with app)
         startHeartbeatTimer()
 
         // Send immediate heartbeat to maintain active status
         sendHeartbeatNow()
 
-        NSLog("[LocationManager] Background mode: significant location changes + visits only")
+        NSLog("[LocationManager] Background mode: pulse GPS + significant changes + visits")
     }
 
     @objc func appDidBecomeActive() {
@@ -338,20 +345,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard let location = locations.last else { return }
         lastKnownLocation = location
 
-        // In background, only process location updates during GPS windows triggered by movement
-        if isInBackground && !isGPSEnabledByMovement {
-            // Location update from significant location changes — start GPS window
-            // and process this location
-            startGPSWindowForMovement()
-        }
-
         guard let userId = userId, trackingEnabled else { return }
 
         sendDebugLog("did_update_locations", details: "bg=\(isInBackground), accuracy=\(location.horizontalAccuracy)m, speed=\(location.speed)m/s")
 
-        // This is the PRIMARY heartbeat mechanism.
-        // Every location update triggers a heartbeat + location upload.
-        // The DispatchSourceTimer is a backup that only works in foreground.
+        // PRIMARY heartbeat mechanism.
+        // With continuous GPS (even at low accuracy), iOS delivers callbacks
+        // every 1-3 min even for stationary devices. Each callback = heartbeat.
 
         // Protect network calls with a UIBackgroundTask so iOS doesn't
         // suspend the app before they complete.
@@ -360,8 +360,6 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             // Expiration handler — iOS is about to suspend us. End cleanly.
             self?.endBackgroundTask(bgTaskId)
         }
-
-        sendDebugLog("did_update_locations", details: "bg=\(isInBackground)")
 
         // Refresh token asynchronously, then send heartbeat + location update
         refreshTokenAsync { [weak self] in
@@ -413,14 +411,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
-        NSLog("[LocationManager] ⚠️ Location updates PAUSED by iOS")
-        sendDebugLog("location_paused_restart")
-        if isInBackground {
-            startGPSWindowForMovement()
-        } else {
-            manager.startUpdatingLocation()
-        }
-        startHeartbeatTimer()
+        NSLog("[LocationManager] ⚠️ Location updates PAUSED by iOS (stationary device)")
+        sendDebugLog("location_paused_by_ios")
+
+        // Send a final heartbeat before app suspends — this buys us ~5 min of "online"
+        sendHeartbeatNow()
+
+        // Don't restart GPS here — the arrow disappears (what the user wants).
+        // The app will be woken by: silent push, significant change, or visit.
+        // When woken, AppDelegate calls sendHeartbeatNow() + brief GPS restart.
     }
 
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
@@ -437,9 +436,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
         sendDebugLog("visit_detected", details: "arriving=\(visit.arrivalDate)")
 
-        // Start GPS window to get precise location for proximity check
+        // Briefly switch to high accuracy for a fresh GPS fix on visit detection
         if isInBackground {
-            startGPSWindowForMovement()
+            locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            locationManager.distanceFilter = kCLDistanceFilterNone
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
+                guard let self = self else { return }
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+            }
         }
 
         // Protect with UIBackgroundTask so iOS doesn't suspend before network completes
@@ -460,11 +465,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     // MARK: - Background Wiggle Timer
-    // iOS suspends DispatchSourceTimers when the app is suspended, and
-    // didUpdateLocations stops firing for stationary devices. This timer
-    // works around both issues by briefly restarting location updates with
-    // high accuracy every 3 minutes. iOS grants ~30 seconds of background
-    // time for each location update callback, during which we send a heartbeat.
+    // Backup mechanism: briefly restarts location updates with high accuracy
+    // every 3 minutes to force a fresh GPS fix. This supplements the continuous
+    // low-accuracy GPS that's now the primary background mechanism.
 
     private func startBackgroundWiggleTimer() {
         // Don't restart if already running
@@ -475,29 +478,23 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         timer.schedule(deadline: .now() + backgroundWiggleInterval, repeating: backgroundWiggleInterval, leeway: .seconds(30))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
-            NSLog("[LocationManager] Background wiggle: restarting location updates to force callback")
-            self.sendDebugLog("bg_wiggle_restart")
+            NSLog("[LocationManager] Background wiggle: forcing high-accuracy refresh")
+            self.sendDebugLog("bg_wiggle_refresh")
 
-            // Stop and restart location updates with high accuracy briefly.
-            // This forces iOS to acquire a new GPS fix and call didUpdateLocations.
-            self.locationManager.stopUpdatingLocation()
+            // Briefly switch to high accuracy for a fresh GPS fix, then back to low
             self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
             self.locationManager.distanceFilter = kCLDistanceFilterNone
-            self.locationManager.startUpdatingLocation()
 
-            // After 5 seconds, switch back to battery-efficient accuracy
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { [weak self] in
                 guard let self = self else { return }
-                self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
                 self.locationManager.distanceFilter = kCLDistanceFilterNone
             }
 
-            // Also send a direct heartbeat in case the location restart
-            // doesn't trigger didUpdateLocations quickly enough.
+            // Also send a direct heartbeat
             self.sendHeartbeatNow()
 
-            // Check proximity alerts using lastKnownLocation — critical for
-            // stationary devices where didUpdateLocations stops firing.
+            // Check proximity alerts using lastKnownLocation
             if let lastLoc = self.lastKnownLocation {
                 self.sendProximityCheck(location: lastLoc)
             }
@@ -613,7 +610,37 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if let location = lastKnownLocation {
             sendProximityCheck(location: location)
         } else if isInBackground {
-            startGPSWindowForMovement()
+            // No last location — briefly start GPS to get one
+            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            locationManager.distanceFilter = kCLDistanceFilterNone
+            locationManager.startUpdatingLocation()
+        }
+    }
+
+    // MARK: - Pulse Location Update
+    // Briefly restarts GPS at low accuracy when woken by silent push.
+    // This forces iOS to deliver at least one location callback → heartbeat.
+    // After the callback, iOS will pause GPS again when stationary (arrow disappears).
+    // This creates the "intermittent" pattern the user wants.
+
+    @objc func pulseLocationUpdate() {
+        guard isInBackground else { return }
+
+        NSLog("[LocationManager] Pulse: briefly restarting GPS for heartbeat")
+        sendDebugLog("pulse_gps_start")
+
+        // Restart GPS at low accuracy — iOS will deliver a callback
+        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.startUpdatingLocation()
+
+        // After 10 seconds, let iOS pause again (if stationary).
+        // 10s is enough for iOS to get a WiFi/cell fix and call didUpdateLocations.
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
+            guard let self = self else { return }
+            // Don't explicitly stop — let pausesLocationUpdatesAutomatically handle it.
+            // iOS will pause when it detects no movement, making the arrow disappear.
+            self.sendDebugLog("pulse_gps_end")
         }
     }
 
