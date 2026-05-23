@@ -478,9 +478,9 @@ export const MapView: React.FC = () => {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const p = b.profile as any;
 
-        // Seguridad: si el otro no quiere trackear o está en stealth => no mostrar
+        // Seguridad: si el otro está en stealth => no mostrar
         if (p?.stealth_mode) return false;
-        if (p?.tracking_enabled === false) return false;
+        // tracking_enabled = false => mostrar en última ubicación pero como offline (no filtrar)
 
         const mode = normalizeVisibilityMode(p?.location_visibility_mode);
 
