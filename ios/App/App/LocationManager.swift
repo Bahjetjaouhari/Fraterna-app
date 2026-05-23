@@ -414,7 +414,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] ⚠️ Location updates PAUSED by iOS (stationary device)")
         sendDebugLog("location_paused_by_ios")
 
-        // Send a final heartbeat before app suspends — this buys us ~5 min of "online"
+        // Send a final heartbeat before app suspends — this buys us ~10 min of "online"
         sendHeartbeatNow()
 
         // Don't restart GPS here — the arrow disappears (what the user wants).
@@ -1094,8 +1094,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             NSLog("[LocationManager] Proximity: \(profileId) invalid heartbeat date")
             return
         }
-        let fiveMinAgo = Date().addingTimeInterval(-300)
-        guard heartbeatDate > fiveMinAgo else {
+        let tenMinAgo = Date().addingTimeInterval(-600)
+        guard heartbeatDate > tenMinAgo else {
             NSLog("[LocationManager] Proximity: \(profileId) heartbeat too old")
             return
         }

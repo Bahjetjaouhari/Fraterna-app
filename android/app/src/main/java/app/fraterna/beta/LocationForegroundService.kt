@@ -48,7 +48,7 @@ class LocationForegroundService : Service() {
         const val ACTION_UPDATE_TOKEN = "app.fraterna.beta.action.UPDATE_TOKEN"
         const val EXTRA_AUTH_TOKEN = "app.fraterna.beta.extra.AUTH_TOKEN"
         const val EXTRA_USER_ID = "app.fraterna.beta.extra.USER_ID"
-        const val ONLINE_THRESHOLD_SECONDS = 300L // Must match is_user_active() SQL function (5 minutes)
+        const val ONLINE_THRESHOLD_SECONDS = 600L // Must match is_user_active() SQL function (10 minutes)
         private const val HEARTBEAT_ALARM_INTERVAL_MS = 90_000L // 90 seconds
         private const val HEARTBEAT_ALARM_REQUEST_CODE = 9001
 

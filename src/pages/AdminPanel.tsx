@@ -866,7 +866,7 @@ export const AdminPanel: React.FC = () => {
                         const now = Date.now();
                         const heartbeatMs = u.last_heartbeat_at ? new Date(u.last_heartbeat_at).getTime() : 0;
                         const secsAgo = u.last_heartbeat_at ? Math.floor((now - heartbeatMs) / 1000) : null;
-                        const isOnline = u.last_heartbeat_at && u.tracking_enabled && secsAgo !== null && secsAgo < 300;
+                        const isOnline = u.last_heartbeat_at && u.tracking_enabled && secsAgo !== null && secsAgo < 600;
                         const isStale = u.last_heartbeat_at && secsAgo !== null && secsAgo < 900;
                         const hasNativeDebug = u.last_debug_event && !u.last_debug_event.startsWith("js_");
                         const hasJsDebug = u.last_debug_event && u.last_debug_event.startsWith("js_");
@@ -883,7 +883,7 @@ export const AdminPanel: React.FC = () => {
                         } else if (isOnline) {
                           diagnosis = "Funcionando correctamente";
                           diagnosisColor = "text-green-400";
-                        } else if (secsAgo !== null && secsAgo > 300 && secsAgo < 900) {
+                        } else if (secsAgo !== null && secsAgo > 600 && secsAgo < 900) {
                           if (hasJsDebug && !hasNativeDebug) {
                             diagnosis = "iOS: servicio nativo NO envia heartbeats en background. Solo funciona en foreground.";
                             diagnosisColor = "text-orange-400";
