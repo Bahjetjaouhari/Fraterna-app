@@ -392,7 +392,7 @@ class LocationForegroundService : Service() {
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 description = "Notificaciones cuando un QH está cerca"
-                setShowBadge(true)
+                setShowBadge(false)
                 enableVibration(true)
             }
 
