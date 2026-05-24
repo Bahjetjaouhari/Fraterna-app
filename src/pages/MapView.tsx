@@ -847,12 +847,19 @@ export const MapView: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [stealthMode]);
 
+  // Track whether this is the first location fix (auto-center once, then stop)
+  const hasCenteredRef = useRef(false);
+
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
     if (myLat == null || myLng == null) return;
 
-    map.jumpTo({ center: [myLng, myLat], zoom: Math.max(map.getZoom(), 13) });
+    // Only auto-center on the very first location fix
+    if (!hasCenteredRef.current) {
+      hasCenteredRef.current = true;
+      map.jumpTo({ center: [myLng, myLat], zoom: 13 });
+    }
 
     // Reverse geocode
     const geoKey = `${myLat.toFixed(3)},${myLng.toFixed(3)}`;
@@ -902,8 +909,19 @@ export const MapView: React.FC = () => {
     return haversineDistance(myLat, myLng, lat, lng).toFixed(2);
   };
 
-  const zoomIn = () => mapRef.current?.zoomIn({ duration: 0 });
-  const zoomOut = () => mapRef.current?.zoomOut({ duration: 0 });
+  const zoomIn = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    // Zoom around the current cursor/center point so markers stay put
+    const center = map.getCenter();
+    map.zoomTo(map.getZoom() + 1, { duration: 0, center });
+  };
+  const zoomOut = () => {
+    const map = mapRef.current;
+    if (!map) return;
+    const center = map.getCenter();
+    map.zoomTo(map.getZoom() - 1, { duration: 0, center });
+  };
 
   // Map styles available from MapTiler
   const MAP_STYLES = [
