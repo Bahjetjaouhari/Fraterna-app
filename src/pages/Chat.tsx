@@ -10,6 +10,7 @@ import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { UserProfileModal } from "@/components/UserProfileModal";
 import { sendGlobalMessageNotification } from "@/lib/notifications";
+import { logActivity } from "@/utils/activityLog";
 
 interface ChatMessage {
   id: string;
@@ -198,6 +199,7 @@ export default function Chat() {
       toast.error("Error al enviar mensaje");
       setNewMessage(messageText);
     } else {
+      logActivity("chat_message", { preview: messageText.slice(0, 50) });
       // Send push notification to all users
       sendGlobalMessageNotification(messageText, user.id).catch((err) => {
         console.error('Error sending global message notification:', err);

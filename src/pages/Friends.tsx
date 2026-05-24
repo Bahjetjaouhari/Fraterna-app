@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
+import { logActivity } from "@/utils/activityLog";
 import { UserProfileModal } from "@/components/UserProfileModal";
 import { sendFriendRequestNotification, sendFriendAcceptedNotification } from "@/lib/notifications";
 
@@ -263,6 +264,7 @@ const Friends: React.FC = () => {
           });
 
           toast.success("Solicitud enviada");
+          logActivity("friend_request", { to: otherId });
           await refreshAll();
           return;
         }
@@ -286,6 +288,7 @@ const Friends: React.FC = () => {
         });
 
         toast.success("Solicitud enviada");
+        logActivity("friend_request", { to: otherId });
         await refreshAll();
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -336,6 +339,7 @@ const Friends: React.FC = () => {
         }
 
         toast.success("Solicitud aceptada");
+        logActivity("friend_accepted", { from: friendship.requester_id });
         await refreshAll();
       }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -403,6 +407,9 @@ const Friends: React.FC = () => {
         const { error } = await supabase.from("friendships").delete().eq("id", friendshipId);
         if (error) throw error;
 
+        const row = accepted.find((r) => r.id === friendshipId);
+        const friendId = row ? (row.requester_id === myId ? row.addressee_id : row.requester_id) : "unknown";
+        logActivity("friend_removed", { removed: friendId });
         toast.success("Amigo eliminado");
         await refreshAll();
         await doSearch();

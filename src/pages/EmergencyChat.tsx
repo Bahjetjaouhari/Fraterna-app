@@ -11,6 +11,7 @@ import { UserProfileModal } from "@/components/UserProfileModal";
 import { resizeImageForAvatar } from "@/utils/resizeImage";
 import { Camera as CameraPlugin, CameraResultType, CameraSource } from "@capacitor/camera";
 import { Capacitor } from "@capacitor/core";
+import { logActivity } from "@/utils/activityLog";
 
 type ProfileMini = { id: string; full_name: string | null; photo_url: string | null };
 
@@ -328,6 +329,7 @@ const EmergencyChat = () => {
       console.error(error);
       toast.error("No se pudo enviar el mensaje");
     } else {
+      logActivity("emergency_message", { city: myCity, has_media: !!uploadedMediaUrl });
       setText("");
       clearMedia();
 

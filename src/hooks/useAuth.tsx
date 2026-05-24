@@ -5,6 +5,7 @@ import { Preferences } from '@capacitor/preferences';
 import { App } from '@capacitor/app';
 import { supabase } from '@/integrations/supabase/client';
 import { LocationService } from '@/hooks/useLocationService';
+import { logActivity } from '@/utils/activityLog';
 
 interface Profile {
   id: string;
@@ -329,6 +330,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     const setupAppStateListener = async () => {
       const appStateListener = await App.addListener('appStateChange', async (state: { isActive: boolean }) => {
         if (state.isActive && user?.id) {
+          logActivity('app_open');
           // App came to foreground - send heartbeat and push fresh token to native service
           sendHeartbeat(user.id);
           window.dispatchEvent(new CustomEvent('app-resume'));
@@ -368,6 +370,8 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
               }
             }
           }
+        } else if (!state.isActive && user?.id) {
+          logActivity('app_background');
         }
       });
       return appStateListener;
@@ -439,6 +443,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
 
         // Start heartbeat on login
         startHeartbeat(data.user.id);
+        logActivity('login', { method: 'password' });
 
         if (force) {
           // Ya se actualizó en BD, podemos quitar la bandera y recargar
@@ -455,6 +460,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   };
 
   const signOut = async () => {
+    logActivity('logout');
     // Stop heartbeat and clear session data
     stopHeartbeat();
 

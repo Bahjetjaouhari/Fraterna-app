@@ -20,6 +20,16 @@ import {
   Loader2,
   Trash2,
   Bug,
+  Activity,
+  Smartphone,
+  LogIn,
+  LogOut,
+  Ghost,
+  MapPin,
+  Bell,
+  Eye,
+  UserCog,
+  Circle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -80,7 +90,7 @@ type DebugRow = {
 export const AdminPanel: React.FC = () => {
   const { isAdmin } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<"users" | "reports" | "chat" | "debug">("users");
+  const [activeTab, setActiveTab] = useState<"users" | "reports" | "chat" | "debug" | "activity">("users");
 
   // Users state
   const [users, setUsers] = useState<ProfileRow[]>([]);
@@ -96,6 +106,21 @@ export const AdminPanel: React.FC = () => {
   // Debug state
   const [debugUsers, setDebugUsers] = useState<DebugRow[]>([]);
   const [debugLoading, setDebugLoading] = useState(false);
+
+  // Activity state
+  type ActivityRow = {
+    id: string;
+    user_id: string;
+    event: string;
+    details: Record<string, unknown>;
+    platform: string | null;
+    created_at: string;
+    profile: { full_name: string | null; photo_url: string | null } | null;
+  };
+  const [activityLog, setActivityLog] = useState<ActivityRow[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [activityEventFilter, setActivityEventFilter] = useState<string>("all");
+  const [activityUserFilter, setActivityUserFilter] = useState<string>("all");
 
   const isProtectedUser = (userId: string) => SUPER_ADMIN_IDS.includes(userId);
 
@@ -407,6 +432,46 @@ export const AdminPanel: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
+  const loadActivityLog = async () => {
+    if (!isAdmin) return;
+    setActivityLoading(true);
+    try {
+      let query = supabase
+        .from("user_activity_log")
+        .select("id, user_id, event, details, platform, created_at, profile:profiles!user_activity_log_user_id_fkey(full_name, photo_url)")
+        .order("created_at", { ascending: false })
+        .limit(200);
+
+      if (activityEventFilter !== "all") query = query.eq("event", activityEventFilter);
+      if (activityUserFilter !== "all") query = query.eq("user_id", activityUserFilter);
+
+      const { data, error } = await query;
+      if (error) {
+        console.error(error);
+        toast.error("No se pudo cargar el registro de actividad");
+        return;
+      }
+
+      setActivityLog((data || []) as unknown as ActivityRow[]);
+    } finally {
+      setActivityLoading(false);
+    }
+  };
+
+  // Auto-refresh activity tab every 10 seconds
+  useEffect(() => {
+    if (activeTab !== "activity" || !isAdmin) return;
+    const interval = setInterval(loadActivityLog, 10000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTab, isAdmin, activityEventFilter, activityUserFilter]);
+
+  // Reload activity when filters change
+  useEffect(() => {
+    if (activeTab === "activity" && isAdmin) loadActivityLog();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activityEventFilter, activityUserFilter]);
+
   const updateReportStatus = async (reportId: string, newStatus: "resolved" | "dismissed") => {
     try {
       const { error } = await supabase
@@ -428,6 +493,7 @@ export const AdminPanel: React.FC = () => {
     if (activeTab === "users" && isAdmin) loadUsers();
     if (activeTab === "reports" && isAdmin) loadReports();
     if (activeTab === "debug" && isAdmin) loadDebugUsers();
+    if (activeTab === "activity" && isAdmin) loadActivityLog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, isAdmin]);
 
@@ -486,7 +552,7 @@ export const AdminPanel: React.FC = () => {
               </p>
             </div>
           ) : (
-            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "users" | "reports" | "chat")}>
+            <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "users" | "reports" | "chat" | "debug" | "activity")}>
               <TabsList className="w-full mb-6">
                 <TabsTrigger value="users" className="flex-1">
                   <Users size={16} className="mr-2" />
@@ -499,6 +565,10 @@ export const AdminPanel: React.FC = () => {
                 <TabsTrigger value="chat" className="flex-1">
                   <MessageCircle size={16} className="mr-2" />
                   Chat
+                </TabsTrigger>
+                <TabsTrigger value="activity" className="flex-1">
+                  <Activity size={16} className="mr-2" />
+                  Actividad
                 </TabsTrigger>
                 <TabsTrigger value="debug" className="flex-1">
                   <Bug size={16} className="mr-2" />
@@ -941,6 +1011,150 @@ export const AdminPanel: React.FC = () => {
                               <div>Tracking: <span className={u.tracking_enabled ? "text-green-400" : "text-red-400"}>{u.tracking_enabled ? "ON" : "OFF"}</span></div>
                               <div>Debug: <span className="text-foreground font-mono max-w-[180px] truncate inline-block align-bottom" title={u.last_debug_event || ""}>{u.last_debug_event || "ninguno"}</span></div>
                               <div>Stealth: <span className={u.stealth_mode ? "text-yellow-400" : "text-muted-foreground"}>{u.stealth_mode ? "ON" : "OFF"}</span></div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+              </TabsContent>
+
+              {/* ACTIVITY TAB */}
+              <TabsContent value="activity">
+                <div className="card-masonic p-4">
+                  <div className="flex items-center justify-between mb-4">
+                    <h3 className="font-medium">Actividad de Usuarios</h3>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-muted-foreground">Auto-refresh 10s</span>
+                      <Button size="sm" variant="outline" onClick={loadActivityLog} disabled={activityLoading}>
+                        <RefreshCcw size={14} className={activityLoading ? "animate-spin" : ""} />
+                      </Button>
+                    </div>
+                  </div>
+
+                  {/* Filters */}
+                  <div className="flex flex-col sm:flex-row gap-2 mb-4">
+                    <select
+                      className="bg-card border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
+                      value={activityEventFilter}
+                      onChange={(e) => setActivityEventFilter(e.target.value)}
+                    >
+                      <option value="all">Todos los eventos</option>
+                      <option value="app_open">Abrir app</option>
+                      <option value="app_background">App a segundo plano</option>
+                      <option value="login">Inicio de sesion</option>
+                      <option value="logout">Cierre de sesion</option>
+                      <option value="chat_message">Chat global</option>
+                      <option value="emergency_message">Emergencia</option>
+                      <option value="profile_update">Perfil actualizado</option>
+                      <option value="stealth_toggle">Modo fantasma</option>
+                      <option value="tracking_toggle">Tracking</option>
+                      <option value="proximity_toggle">Alertas proximidad</option>
+                      <option value="radius_change">Radio cambiado</option>
+                      <option value="visibility_change">Visibilidad</option>
+                      <option value="friend_request">Solicitud amistad</option>
+                      <option value="friend_accepted">Amistad aceptada</option>
+                      <option value="friend_removed">Amigo eliminado</option>
+                    </select>
+                    <select
+                      className="bg-card border border-border rounded-md px-3 py-1.5 text-sm text-foreground"
+                      value={activityUserFilter}
+                      onChange={(e) => setActivityUserFilter(e.target.value)}
+                    >
+                      <option value="all">Todos los usuarios</option>
+                      {debugUsers.map((u) => (
+                        <option key={u.id} value={u.id}>{u.full_name || u.email || u.id.slice(0, 8)}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {activityLoading && activityLog.length === 0 ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 size={24} className="animate-spin text-gold" />
+                    </div>
+                  ) : activityLog.length === 0 ? (
+                    <div className="text-center py-8 text-muted-foreground text-sm">
+                      No hay actividad registrada
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      {activityLog.map((entry) => {
+                        const eventIcon: Record<string, React.ReactNode> = {
+                          app_open: <Smartphone size={16} />,
+                          app_background: <Smartphone size={16} className="opacity-50" />,
+                          login: <LogIn size={16} />,
+                          logout: <LogOut size={16} />,
+                          chat_message: <MessageCircle size={16} />,
+                          emergency_message: <AlertTriangle size={16} className="text-red-400" />,
+                          profile_update: <UserCog size={16} />,
+                          stealth_toggle: <Ghost size={16} />,
+                          tracking_toggle: <MapPin size={16} />,
+                          proximity_toggle: <Bell size={16} />,
+                          radius_change: <Circle size={16} />,
+                          visibility_change: <Eye size={16} />,
+                          friend_request: <UserPlus size={16} />,
+                          friend_accepted: <UserCheck size={16} />,
+                          friend_removed: <UserMinus size={16} />,
+                        };
+
+                        const eventLabel: Record<string, string> = {
+                          app_open: "Abrio la app",
+                          app_background: "App a segundo plano",
+                          login: "Inicio sesion",
+                          logout: "Cerrio sesion",
+                          chat_message: "Mensaje en chat global",
+                          emergency_message: "Mensaje de emergencia",
+                          profile_update: "Actualizo perfil",
+                          stealth_toggle: entry.details?.enabled ? "Activo modo fantasma" : "Desactivo modo fantasma",
+                          tracking_toggle: entry.details?.enabled ? "Activo tracking" : "Desactivo tracking",
+                          proximity_toggle: entry.details?.enabled ? "Activo alertas proximidad" : "Desactivo alertas proximidad",
+                          radius_change: `Radio: ${entry.details?.radius_km} km`,
+                          visibility_change: `Visibilidad: ${entry.details?.mode}`,
+                          friend_request: "Envio solicitud de amistad",
+                          friend_accepted: "Acepto solicitud de amistad",
+                          friend_removed: "Elimino amigo",
+                        };
+
+                        const timeAgo = (ms: number) => {
+                          const s = Math.floor(ms / 1000);
+                          if (s < 60) return `${s}s`;
+                          const m = Math.floor(s / 60);
+                          if (m < 60) return `${m}m`;
+                          const h = Math.floor(m / 60);
+                          return `${h}h ${m % 60}m`;
+                        };
+
+                        const ago = timeAgo(Date.now() - new Date(entry.created_at).getTime());
+                        const name = entry.profile?.full_name || entry.user_id.slice(0, 8);
+                        const platformBadge = entry.platform
+                          ? { ios: "iOS", android: "Android", web: "Web" }[entry.platform] || entry.platform
+                          : null;
+
+                        return (
+                          <div key={entry.id} className="flex items-start gap-3 border border-border rounded-lg p-3">
+                            <div className="text-muted-foreground mt-0.5 flex-shrink-0">
+                              {eventIcon[entry.event] || <Activity size={16} />}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <div className="flex items-center justify-between gap-2">
+                                <span className="font-medium text-sm truncate">{name}</span>
+                                <div className="flex items-center gap-2 flex-shrink-0">
+                                  {platformBadge && (
+                                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground">{platformBadge}</span>
+                                  )}
+                                  <span className="text-xs text-muted-foreground">{ago}</span>
+                                </div>
+                              </div>
+                              <p className="text-sm text-muted-foreground mt-0.5">
+                                {eventLabel[entry.event] || entry.event}
+                              </p>
+                              {entry.event === "chat_message" && entry.details?.preview && (
+                                <p className="text-xs text-muted-foreground/70 mt-0.5 truncate">"{String(entry.details.preview)}"</p>
+                              )}
+                              {entry.event === "emergency_message" && entry.details?.city && (
+                                <p className="text-xs text-muted-foreground/70 mt-0.5">Ciudad: {String(entry.details.city)}{entry.details.has_media ? " + media" : ""}</p>
+                              )}
                             </div>
                           </div>
                         );

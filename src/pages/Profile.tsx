@@ -27,6 +27,7 @@ import { useAuth } from "@/hooks/useAuth";
 import { supabase } from "@/integrations/supabase/client";
 import { resizeImageForAvatar } from "@/utils/resizeImage";
 import { toast } from "sonner";
+import { logActivity } from "@/utils/activityLog";
 
 const proximityOptions = [
   { value: 1, label: "1 km" },
@@ -227,6 +228,9 @@ export const Profile: React.FC = () => {
 
       await refreshProfile();
       toast.success("Configuración actualizada");
+      if (key === "stealth_mode") logActivity("stealth_toggle", { enabled: value });
+      if (key === "tracking_enabled") logActivity("tracking_toggle", { enabled: value });
+      if (key === "proximity_alerts_enabled") logActivity("proximity_toggle", { enabled: value });
     } catch (error) {
       console.error("Error updating profile:", error);
       toast.error("Error al actualizar configuración");
@@ -245,6 +249,7 @@ export const Profile: React.FC = () => {
 
       await refreshProfile();
       toast.success("Configuración actualizada");
+      if (key === "proximity_radius_km") logActivity("radius_change", { radius_km: value });
     } catch (error) {
       console.error("Error updating profile:", error);
       toast.error("Error al actualizar configuración");
@@ -290,6 +295,7 @@ export const Profile: React.FC = () => {
 
       await refreshProfile();
       toast.success("Perfil actualizado correctamente");
+      logActivity("profile_update", { fields: Object.keys(updates) });
       setIsEditing(false);
     } catch (error) {
       console.error("Error updating profile:", error);
@@ -562,6 +568,7 @@ export const Profile: React.FC = () => {
 
                     await refreshProfile();
                     toast.success("Configuración actualizada");
+                    logActivity("visibility_change", { mode });
                   } catch (error) {
                     console.error("Error updating visibility mode:", error);
                     toast.error("Error al actualizar configuración");
