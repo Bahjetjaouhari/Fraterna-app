@@ -370,9 +370,10 @@ class LocationForegroundService : Service() {
                 refreshToken()
                 sendHeartbeat()
                 loadProfileSettings()
-                // Also check proximity on heartbeat alarm (defense-in-depth)
-                // This ensures proximity is checked even when no GPS update has fired recently
+                // Upsert location on heartbeat so the server-side trigger fires
+                // even if GPS hasn't delivered a new position recently.
                 lastKnownLocation?.let { location ->
+                    updateLocationInSupabase(location)
                     checkProximityAlerts(location)
                 }
             } catch (e: Exception) {

@@ -599,10 +599,38 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         guard let userId = userId else { return }
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
-            self.sendHeartbeat(userId: userId, authToken: token)
+
+            var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+            bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "FraternaHeartbeat") { [weak self] in
+                self?.endBackgroundTask(bgTaskId)
+            }
+
+            let group = DispatchGroup()
+
+            group.enter()
+            self.sendHeartbeat(userId: userId, authToken: token) {
+                group.leave()
+            }
+
+            // Upsert location on every heartbeat so the server-side trigger fires
+            // even when iOS GPS is paused (stationary device).
+            if let lastLoc = self.lastKnownLocation, self.trackingEnabled && !self.stealthMode {
+                group.enter()
+                self.updateLocation(userId: userId, authToken: token, location: lastLoc) {
+                    group.leave()
+                }
+            }
+
             // Also check proximity on every heartbeat cycle
             if let lastLoc = self.lastKnownLocation {
-                self.checkProximityAlerts(userId: userId, authToken: token, location: lastLoc)
+                group.enter()
+                self.checkProximityAlerts(userId: userId, authToken: token, location: lastLoc) {
+                    group.leave()
+                }
+            }
+
+            group.notify(queue: .global(qos: .utility)) { [weak self] in
+                self?.endBackgroundTask(bgTaskId)
             }
         }
     }
