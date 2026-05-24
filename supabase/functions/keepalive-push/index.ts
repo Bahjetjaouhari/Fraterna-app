@@ -144,11 +144,14 @@ async function sendSilentPush(
     if (platform === 'ios') {
       // iOS silent push: content-available=1, no alert/sound/badge
       // apns-push-type must be 'background' for silent pushes
-      // apns-priority must be '5' (not '10') for background pushes
+      // apns-priority '10' (immediate) instead of '5' (power-efficient).
+      // Priority 5 causes iOS to silently drop the push when the app is
+      // deeply suspended, defeating the whole purpose of keepalive.
+      // Priority 10 guarantees delivery at the cost of slightly more battery.
       message.apns = {
         headers: {
           'apns-push-type': 'background',
-          'apns-priority': '5',
+          'apns-priority': '10',
         },
         payload: {
           aps: {
@@ -201,11 +204,13 @@ serve(async (req) => {
     // 1. Have tracking_enabled = true (they want to be tracked)
     // 2. Have a push_token (they can receive pushes)
     // 3. Have a heartbeat older than 2 minutes (stale — need wake up)
-    // 4. Have a heartbeat newer than 10 minutes (not fully offline/logged out)
-    // This avoids waking users who intentionally turned off tracking
-    // or who have been offline for a long time (battery dead, etc.)
+    // 4. Have a heartbeat newer than 60 minutes (not fully offline/logged out)
+    // iOS silent pushes are unreliable — the app can stay suspended for
+    // 20+ minutes before the first keepalive attempt succeeds. A 10-min
+    // window was too short and caused iOS users to permanently fall off
+    // once their heartbeat expired past the cutoff.
     const twoMinAgo = new Date(Date.now() - 2 * 60 * 1000).toISOString()
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString()
+    const sixtyMinAgo = new Date(Date.now() - 60 * 60 * 1000).toISOString()
 
     const { data: staleUsers, error } = await supabase
       .from('profiles')
@@ -213,7 +218,7 @@ serve(async (req) => {
       .eq('tracking_enabled', true)
       .not('push_token', 'is', null)
       .lt('last_heartbeat_at', twoMinAgo)
-      .gt('last_heartbeat_at', tenMinAgo)
+      .gt('last_heartbeat_at', sixtyMinAgo)
 
     if (error) {
       console.error('[KEEPALIVE] Error querying stale users:', error)

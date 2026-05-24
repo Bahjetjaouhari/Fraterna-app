@@ -240,6 +240,9 @@ class LocationForegroundService : Service() {
     // Proximity alert tracking (thread-safe)
     private val proximityCooldowns = ConcurrentHashMap<String, Long>()
     private val PROXIMITY_COOLDOWN_MS = 5 * 60 * 1000L // 5 minutes
+    private val proximityNotificationCounts = ConcurrentHashMap<String, Int>()
+    private val proximityLastDistances = ConcurrentHashMap<String, Double>()
+    private var lastKnownLocation: Location? = null
 
     // Profile settings cache TTL (avoid fetching every 15s)
     @Volatile
@@ -312,12 +315,12 @@ class LocationForegroundService : Service() {
         }
 
         val priority = if (backgroundMode) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
-        val intervalMs = if (backgroundMode) 30000L else 15000L
+        val intervalMs = if (backgroundMode) 15000L else 10000L
 
         val locationRequest = LocationRequest.Builder(priority, intervalMs).apply {
-            setMinUpdateIntervalMillis(if (backgroundMode) 20000L else 10000L)
+            setMinUpdateIntervalMillis(if (backgroundMode) 10000L else 5000L)
             setWaitForAccurateLocation(!backgroundMode)
-            setMaxUpdateDelayMillis(if (backgroundMode) 60000L else 30000L)
+            setMaxUpdateDelayMillis(if (backgroundMode) 30000L else 15000L)
         }.build()
 
         locationCallback?.let { callback ->
@@ -367,6 +370,11 @@ class LocationForegroundService : Service() {
                 refreshToken()
                 sendHeartbeat()
                 loadProfileSettings()
+                // Also check proximity on heartbeat alarm (defense-in-depth)
+                // This ensures proximity is checked even when no GPS update has fired recently
+                lastKnownLocation?.let { location ->
+                    checkProximityAlerts(location)
+                }
             } catch (e: Exception) {
                 android.util.Log.e("LocationService", "Heartbeat alarm handler error: ${e.message}")
             }
@@ -456,20 +464,21 @@ class LocationForegroundService : Service() {
 
         // Adjust location request based on background mode
         val priority = if (backgroundMode) Priority.PRIORITY_BALANCED_POWER_ACCURACY else Priority.PRIORITY_HIGH_ACCURACY
-        val intervalMs = if (backgroundMode) 30000L else 15000L
+        val intervalMs = if (backgroundMode) 15000L else 10000L
 
         val locationRequest = LocationRequest.Builder(
             priority,
             intervalMs
         ).apply {
-            setMinUpdateIntervalMillis(if (backgroundMode) 20000L else 10000L)
+            setMinUpdateIntervalMillis(if (backgroundMode) 10000L else 5000L)
             setWaitForAccurateLocation(!backgroundMode)
-            setMaxUpdateDelayMillis(if (backgroundMode) 60000L else 30000L)
+            setMaxUpdateDelayMillis(if (backgroundMode) 30000L else 15000L)
         }.build()
 
         locationCallback = object : LocationCallback() {
             override fun onLocationResult(locationResult: LocationResult) {
                 locationResult.lastLocation?.let { location ->
+                    lastKnownLocation = location
                     sendLocationToWebView(location)
                     // Single coroutine per tick — refreshToken once, then call all methods
                     serviceScope.launch {
@@ -1131,8 +1140,23 @@ class LocationForegroundService : Service() {
                                 val now = System.currentTimeMillis()
                                 val lastNotified = proximityCooldowns[brotherId] ?: 0L
 
+                                // Max 2 notifications per proximity session. Reset when they separate and re-enter.
+                                val prevDist = proximityLastDistances[brotherId]
+                                if (prevDist != null && prevDist > radiusKm) {
+                                    // They separated and came back: reset session
+                                    proximityNotificationCounts[brotherId] = 0
+                                }
+                                val count = proximityNotificationCounts[brotherId] ?: 0
+                                proximityLastDistances[brotherId] = distance
+
+                                if (count >= 2) {
+                                    // Already sent 2 notifications in this session
+                                    continue
+                                }
+
                                 if (now - lastNotified >= PROXIMITY_COOLDOWN_MS) {
                                     proximityCooldowns[brotherId] = now
+                                    proximityNotificationCounts[brotherId] = count + 1
                                     showProximityNotification(brotherName, distance, radiusKm)
                                     // Send push to the OTHER user telling them WE are nearby.
                                     // from_name must be OUR name, not the other user's name.

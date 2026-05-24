@@ -439,9 +439,9 @@ serve(async (req) => {
     // PROXIMITY ALERT - Notify a nearby QH
     // ========================================
     else if (type === 'proximity_alert') {
-      const { from_user_id, from_name: clientFromName, to_user_id } = data
+      const { from_user_id, from_name: clientFromName, to_user_id, distance_km } = data
 
-      console.log('[PROXIMITY] FULL DATA:', JSON.stringify({ from_user_id, from_name: clientFromName, to_user_id }))
+      console.log('[PROXIMITY] FULL DATA:', JSON.stringify({ from_user_id, from_name: clientFromName, to_user_id, distance_km }))
 
       // Block self-notifications (defense-in-depth, client should also filter)
       if (from_user_id === to_user_id) {
@@ -485,10 +485,20 @@ serve(async (req) => {
       }
 
       if (recipient?.push_token) {
+        // Include distance in notification body when available (from server trigger)
+        let bodyText: string
+        if (distance_km != null && distance_km < 1.0) {
+          bodyText = `${from_name} está a ${Math.round((distance_km as number) * 1000)} m de ti`
+        } else if (distance_km != null) {
+          bodyText = `${from_name} está a ${(distance_km as number).toFixed(1)} km de ti`
+        } else {
+          bodyText = `${from_name} está cerca de ti`
+        }
+
         notifications.push({
           token: recipient.push_token,
           title: 'QH Cerca',
-          body: `${from_name} está cerca de ti`,
+          body: bodyText,
           type: 'proximity_alert',
           badgeCount: 0,
           data: {

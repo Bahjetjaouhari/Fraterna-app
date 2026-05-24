@@ -11,6 +11,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var userId: String?
     private var authToken: String?
     private var proximityCooldowns: [String: Date] = [:]
+    private var proximityNotificationCounts: [String: Int] = [:]
+    private var proximityLastDistance: [String: Double] = [:]
     private var trackingEnabled: Bool = true
     private var stealthMode: Bool = false
     private var proximityRadiusKm: Double = 5.0
@@ -266,13 +268,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func setBackgroundAccuracy() {
-        // "Pulse" mode: GPS at low accuracy in background.
-        // iOS delivers callbacks while active, then PAUSES when device is stationary.
-        // When paused, the arrow disappears and app may suspend.
-        // Silent pushes from cron wake the app → brief GPS restart → heartbeat → pause again.
+        // Real-time mode: GPS at NearestTenMeters in background with distanceFilter.
+        // iOS delivers callbacks when user moves 10m+ — real-time when moving,
+        // battery-efficient when stationary (iOS pauses GPS automatically).
         isInBackground = true
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        locationManager.distanceFilter = 10
         locationManager.startUpdatingLocation()
         locationManager.startMonitoringSignificantLocationChanges()
         locationManager.startMonitoringVisits()
@@ -289,12 +290,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             writeImmediateDebugEvent("native_bg_v40", userId: uid)
         }
 
-        // "Pulse" mode: GPS at low accuracy in background.
-        // iOS delivers callbacks while active, then PAUSES when stationary.
-        // pausesLocationUpdatesAutomatically = true → iOS pauses GPS → arrow disappears.
-        // Silent pushes wake the app for brief GPS + heartbeat → arrow flashes → pause again.
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
+        // Real-time mode: GPS at NearestTenMeters in background with distanceFilter.
+        // iOS delivers callbacks when user moves 10m+ — real-time when moving,
+        // battery-efficient when stationary (iOS pauses GPS automatically).
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        locationManager.distanceFilter = 10
         locationManager.startUpdatingLocation()
 
         // Keep significant location changes and visit monitoring as additional wakeup triggers
@@ -307,7 +307,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Send immediate heartbeat to maintain active status
         sendHeartbeatNow()
 
-        NSLog("[LocationManager] Background mode: pulse GPS + significant changes + visits")
+        // Start wiggle timer: forces high-accuracy GPS burst every 3 min
+        // This guarantees a heartbeat cycle even when iOS pauses GPS
+        startBackgroundWiggleTimer()
+
+        NSLog("[LocationManager] Background mode: real-time GPS + significant changes + visits + wiggle timer")
     }
 
     @objc func appDidBecomeActive() {
@@ -322,6 +326,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         // Cancel any GPS window timer (we're in foreground now)
         cancelGPSWindowTimer()
+
+        // Stop background wiggle timer (not needed in foreground)
+        stopBackgroundWiggleTimer()
 
         // Send immediate heartbeat
         sendHeartbeatNow()
@@ -423,7 +430,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
-        NSLog("[LocationManager] Location updates resumed")
+        NSLog("[LocationManager] Location updates resumed — user started moving, sending heartbeat")
+        sendDebugLog("location_resumed", details: "sending_heartbeat")
+        // User started moving again — immediately send heartbeat and check proximity
+        sendHeartbeatNow()
     }
 
     // MARK: - Visit Monitoring Delegate
@@ -438,13 +448,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         // Briefly switch to high accuracy for a fresh GPS fix on visit detection
         if isInBackground {
-            locationManager.desiredAccuracy = kCLLocationAccuracyBest
-            locationManager.distanceFilter = kCLDistanceFilterNone
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
-                guard let self = self else { return }
-                self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-                self.locationManager.distanceFilter = kCLDistanceFilterNone
-            }
+            startGPSWindowForMovement()
         }
 
         // Protect with UIBackgroundTask so iOS doesn't suspend before network completes
@@ -487,8 +491,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
             DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 5) { [weak self] in
                 guard let self = self else { return }
-                self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-                self.locationManager.distanceFilter = kCLDistanceFilterNone
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                self.locationManager.distanceFilter = 10
             }
 
             // Also send a direct heartbeat
@@ -611,8 +615,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             sendProximityCheck(location: location)
         } else if isInBackground {
             // No last location — briefly start GPS to get one
-            locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-            locationManager.distanceFilter = kCLDistanceFilterNone
+            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            locationManager.distanceFilter = 10
             locationManager.startUpdatingLocation()
         }
     }
@@ -629,9 +633,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Pulse: briefly restarting GPS for heartbeat")
         sendDebugLog("pulse_gps_start")
 
-        // Restart GPS at low accuracy — iOS will deliver a callback
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
+        // Restart GPS at medium accuracy — iOS will deliver a callback
+        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+        locationManager.distanceFilter = 10
         locationManager.startUpdatingLocation()
 
         // After 10 seconds, let iOS pause again (if stationary).
@@ -854,9 +858,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     /// Send heartbeat with optional completion handler for DispatchGroup coordination
     private func sendHeartbeat(userId: String, authToken: String, completion: (() -> Void)?) {
-        // Throttle: don't send more than once per 30 seconds
+        // Throttle: don't send more than once per 15 seconds
         let now = Date()
-        guard now.timeIntervalSince(lastHeartbeatTime) >= 30 else {
+        guard now.timeIntervalSince(lastHeartbeatTime) >= 15 else {
             NSLog("[LocationManager] Heartbeat throttled (sent \(Int(now.timeIntervalSince(lastHeartbeatTime)))s ago)")
             completion?()
             return
@@ -1113,6 +1117,19 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             return
         }
 
+        // Max 2 notifications per proximity session. Reset when they separate and re-enter.
+        let prevDistance = proximityLastDistance[profileId]
+        let separated = prevDistance != nil && prevDistance! > alertRadius
+        if separated {
+            // They separated and came back: reset session
+            proximityNotificationCounts[profileId] = 0
+        }
+        let count = proximityNotificationCounts[profileId] ?? 0
+        if count >= 2 {
+            // Already sent 2 notifications in this session, just track distance
+            proximityLastDistance[profileId] = distance
+            return
+        }
         if let lastAlert = proximityCooldowns[profileId],
            Date().timeIntervalSince(lastAlert) < 300 {
             NSLog("[LocationManager] Proximity: \(profileId) cooldown active")
@@ -1120,6 +1137,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
 
         proximityCooldowns[profileId] = Date()
+        proximityNotificationCounts[profileId] = count + 1
+        proximityLastDistance[profileId] = distance
         let fullName = profile["full_name"] as? String ?? "Un QH hermano"
         NSLog("[LocationManager] ✓ SENDING proximity notification for \(profileId) at \(String(format: "%.2f", distance))km")
         sendDebugLog("proximity_sent", details: "id=\(profileId.prefix(8)), dist=\(String(format: "%.2f", distance))km")

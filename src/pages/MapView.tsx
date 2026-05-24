@@ -200,6 +200,8 @@ export const MapView: React.FC = () => {
 
   // Anti-spam de alertas
   const lastNotifiedRef = useRef<Record<string, number>>({});
+  const proximityNotifyCounts = useRef<Record<string, number>>({});
+  const proximityLastDistances = useRef<Record<string, number>>({});
 
   // ✅ Optimización: anti-spam para fetchBrothers() vía realtime
   const fetchDebounceTimerRef = useRef<number | null>(null);
@@ -309,9 +311,19 @@ export const MapView: React.FC = () => {
 
       const dist = haversineDistance(myLat, myLng, b.lat, b.lng);
       if (dist <= radiusKm) {
+        // Max 2 notifications per proximity session, reset when they separate
+        const prevDist = proximityLastDistances.current[b.user_id];
+        if (prevDist != null && prevDist > radiusKm) {
+          proximityNotifyCounts.current[b.user_id] = 0;
+        }
+        const count = proximityNotifyCounts.current[b.user_id] ?? 0;
+        proximityLastDistances.current[b.user_id] = dist;
+        if (count >= 2) continue;
+
         const last = lastNotifiedRef.current[b.user_id] ?? 0;
         if (now - last >= COOLDOWN_MS) {
           lastNotifiedRef.current[b.user_id] = now;
+          proximityNotifyCounts.current[b.user_id] = count + 1;
           toast.success(
             `Alerta: ${b.profile?.full_name ?? "Un Q∴H∴"} está a ${dist.toFixed(2)} km de ti (radio ${radiusKm} km).`
           );
