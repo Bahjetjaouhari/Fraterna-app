@@ -553,26 +553,31 @@ export const AdminPanel: React.FC = () => {
             </div>
           ) : (
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "users" | "reports" | "chat" | "debug" | "activity")}>
-              <TabsList className="w-full mb-6">
-                <TabsTrigger value="users" className="flex-1">
-                  <Users size={16} className="mr-2" />
-                  Usuarios
+              <TabsList className="w-full mb-6 h-auto flex-wrap gap-1">
+                <TabsTrigger value="users" className="flex-1 min-w-[60px]">
+                  <Users size={14} className="sm:mr-1.5" />
+                  <span className="hidden sm:inline">Usuarios</span>
+                  <span className="sm:hidden text-[10px]">Users</span>
                 </TabsTrigger>
-                <TabsTrigger value="reports" className="flex-1">
-                  <AlertTriangle size={16} className="mr-2" />
-                  Reportes
+                <TabsTrigger value="reports" className="flex-1 min-w-[60px]">
+                  <AlertTriangle size={14} className="sm:mr-1.5" />
+                  <span className="hidden sm:inline">Reportes</span>
+                  <span className="sm:hidden text-[10px]">Report</span>
                 </TabsTrigger>
-                <TabsTrigger value="chat" className="flex-1">
-                  <MessageCircle size={16} className="mr-2" />
-                  Chat
+                <TabsTrigger value="chat" className="flex-1 min-w-[60px]">
+                  <MessageCircle size={14} className="sm:mr-1.5" />
+                  <span className="hidden sm:inline">Chat</span>
+                  <span className="sm:hidden text-[10px]">Chat</span>
                 </TabsTrigger>
-                <TabsTrigger value="activity" className="flex-1">
-                  <Activity size={16} className="mr-2" />
-                  Actividad
+                <TabsTrigger value="activity" className="flex-1 min-w-[60px]">
+                  <Activity size={14} className="sm:mr-1.5" />
+                  <span className="hidden sm:inline">Actividad</span>
+                  <span className="sm:hidden text-[10px]">Activ</span>
                 </TabsTrigger>
-                <TabsTrigger value="debug" className="flex-1">
-                  <Bug size={16} className="mr-2" />
-                  Debug
+                <TabsTrigger value="debug" className="flex-1 min-w-[60px]">
+                  <Bug size={14} className="sm:mr-1.5" />
+                  <span className="hidden sm:inline">Debug</span>
+                  <span className="sm:hidden text-[10px]">Debug</span>
                 </TabsTrigger>
               </TabsList>
 

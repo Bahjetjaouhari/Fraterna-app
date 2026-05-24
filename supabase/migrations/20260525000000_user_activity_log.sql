@@ -18,8 +18,6 @@ CREATE POLICY "Users can insert own activity"
   ON user_activity_log FOR INSERT
   WITH CHECK (auth.uid() = user_id);
 
-CREATE POLICY "Admins can read all activity"
+CREATE POLICY "Authenticated users can read all activity"
   ON user_activity_log FOR SELECT
-  USING (
-    EXISTS (SELECT 1 FROM profiles WHERE id = auth.uid() AND role = 'admin')
-  );
+  USING (auth.uid() IS NOT NULL);
