@@ -553,31 +553,26 @@ export const AdminPanel: React.FC = () => {
             </div>
           ) : (
             <Tabs value={activeTab} onValueChange={(v) => setActiveTab(v as "users" | "reports" | "chat" | "debug" | "activity")}>
-              <TabsList className="w-full mb-6 h-auto flex-wrap gap-1">
-                <TabsTrigger value="users" className="flex-1 min-w-[60px]">
-                  <Users size={14} className="sm:mr-1.5" />
-                  <span className="hidden sm:inline">Usuarios</span>
-                  <span className="sm:hidden text-[10px]">Users</span>
+              <TabsList className="w-full mb-4 grid grid-cols-5 h-auto">
+                <TabsTrigger value="users" className="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] sm:flex-row sm:gap-1 sm:text-sm">
+                  <Users size={15} />
+                  <span>Usuarios</span>
                 </TabsTrigger>
-                <TabsTrigger value="reports" className="flex-1 min-w-[60px]">
-                  <AlertTriangle size={14} className="sm:mr-1.5" />
-                  <span className="hidden sm:inline">Reportes</span>
-                  <span className="sm:hidden text-[10px]">Report</span>
+                <TabsTrigger value="reports" className="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] sm:flex-row sm:gap-1 sm:text-sm">
+                  <AlertTriangle size={15} />
+                  <span>Reportes</span>
                 </TabsTrigger>
-                <TabsTrigger value="chat" className="flex-1 min-w-[60px]">
-                  <MessageCircle size={14} className="sm:mr-1.5" />
-                  <span className="hidden sm:inline">Chat</span>
-                  <span className="sm:hidden text-[10px]">Chat</span>
+                <TabsTrigger value="chat" className="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] sm:flex-row sm:gap-1 sm:text-sm">
+                  <MessageCircle size={15} />
+                  <span>Chat</span>
                 </TabsTrigger>
-                <TabsTrigger value="activity" className="flex-1 min-w-[60px]">
-                  <Activity size={14} className="sm:mr-1.5" />
-                  <span className="hidden sm:inline">Actividad</span>
-                  <span className="sm:hidden text-[10px]">Activ</span>
+                <TabsTrigger value="activity" className="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] sm:flex-row sm:gap-1 sm:text-sm">
+                  <Activity size={15} />
+                  <span>Actividad</span>
                 </TabsTrigger>
-                <TabsTrigger value="debug" className="flex-1 min-w-[60px]">
-                  <Bug size={14} className="sm:mr-1.5" />
-                  <span className="hidden sm:inline">Debug</span>
-                  <span className="sm:hidden text-[10px]">Debug</span>
+                <TabsTrigger value="debug" className="flex flex-col items-center gap-0.5 py-2 px-1 text-[10px] sm:flex-row sm:gap-1 sm:text-sm">
+                  <Bug size={15} />
+                  <span>Debug</span>
                 </TabsTrigger>
               </TabsList>
 

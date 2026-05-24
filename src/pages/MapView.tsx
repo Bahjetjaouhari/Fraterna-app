@@ -197,6 +197,9 @@ export const MapView: React.FC = () => {
   // Markers refs (para actualizar sin recrear todo)
   const myMarkerRef = useRef<MapLibreMarker | null>(null);
   const brotherMarkersByIdRef = useRef<Record<string, MapLibreMarker>>({});
+  // Track last known positions to skip no-op setLngLat calls during zoom/pan
+  const myMarkerPosRef = useRef<{ lat: number; lng: number } | null>(null);
+  const brotherMarkerPosRef = useRef<Record<string, { lat: number; lng: number }>>({});
 
   // Anti-spam de alertas
   const lastNotifiedRef = useRef<Record<string, number>>({});
@@ -362,7 +365,6 @@ export const MapView: React.FC = () => {
       pitchWithRotate: false,
       touchPitch: false,
       maxTileCacheSize: 150,
-      pixelRatio: 1,
     });
 
     mapRef.current = map;
@@ -683,26 +685,33 @@ export const MapView: React.FC = () => {
     document.head.appendChild(style);
   }, []);
 
+  // Update marker positions without recreating them (prevents "drift" during zoom/pan)
   useEffect(() => {
     const map = mapRef.current;
     if (!map) return;
 
-    // -- My marker --
+    // -- My marker: update position only if coords changed, create if not --
     if (myLat != null && myLng != null) {
+      const prev = myMarkerPosRef.current;
+      const coordsChanged = !prev || prev.lat !== myLat || prev.lng !== myLng;
       if (myMarkerRef.current) {
-        myMarkerRef.current.remove();
-        myMarkerRef.current = null;
+        if (coordsChanged) {
+          myMarkerRef.current.setLngLat([myLng, myLat]);
+          myMarkerPosRef.current = { lat: myLat, lng: myLng };
+        }
+      } else {
+        const myPhotoUrl = profile?.photo_url as string | undefined;
+        const myName = profile?.full_name as string | undefined;
+        const myEl = makeMarkerEl("me", myPhotoUrl, myName);
+        myEl.style.zIndex = "50";
+        myMarkerRef.current = new maplibregl.Marker({ element: myEl, anchor: "bottom" })
+          .setLngLat([myLng, myLat])
+          .addTo(map);
+        myMarkerPosRef.current = { lat: myLat, lng: myLng };
       }
-      const myPhotoUrl = profile?.photo_url as string | undefined;
-      const myName = profile?.full_name as string | undefined;
-      const myEl = makeMarkerEl("me", myPhotoUrl, myName);
-      myEl.style.zIndex = "50";
-      myMarkerRef.current = new maplibregl.Marker({ element: myEl, anchor: "bottom" })
-        .setLngLat([myLng, myLat])
-        .addTo(map);
     }
 
-    // -- Brother markers --
+    // -- Brother markers: create/remove, update position only if coords changed --
     const nextIds = new Set<string>();
 
     for (const b of brothers) {
@@ -711,7 +720,6 @@ export const MapView: React.FC = () => {
 
       nextIds.add(b.user_id);
 
-      // Calculate proximity
       let isNearby = false;
       let distKm = Infinity;
       if (myLat != null && myLng != null) {
@@ -722,39 +730,51 @@ export const MapView: React.FC = () => {
       const isActive = isUserOnline(b.profile) &&
                        b.profile?.stealth_mode !== true;
 
-      // Remove old marker to update photo/proximity/status state
       const existing = brotherMarkersByIdRef.current[b.user_id];
-      if (existing) existing.remove();
+      if (existing) {
+        // Only reposition if coordinates actually changed — avoids interference with zoom
+        const prevPos = brotherMarkerPosRef.current[b.user_id];
+        if (!prevPos || prevPos.lat !== b.lat || prevPos.lng !== b.lng) {
+          existing.setLngLat([b.lng, b.lat]);
+          brotherMarkerPosRef.current[b.user_id] = { lat: b.lat, lng: b.lng };
+        }
+      } else {
+        // New marker — create it
+        const el = makeMarkerEl("bro", b.profile?.photo_url, b.profile?.full_name, isNearby, isActive);
+        el.style.zIndex = isNearby ? "100" : "10";
+        el.addEventListener("click", (e) => {
+          e.stopPropagation();
+          setProfileModalUserId(b.user_id);
+        });
 
-      const el = makeMarkerEl("bro", b.profile?.photo_url, b.profile?.full_name, isNearby, isActive);
-      el.style.zIndex = isNearby ? "100" : "10";
-      el.addEventListener("click", (e) => {
-        e.stopPropagation();
-        setProfileModalUserId(b.user_id);
-      });
+        const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
+          .setLngLat([b.lng, b.lat])
+          .addTo(map);
 
-      const marker = new maplibregl.Marker({ element: el, anchor: "bottom" })
-        .setLngLat([b.lng, b.lat])
-        .addTo(map);
-
-      brotherMarkersByIdRef.current[b.user_id] = marker;
+        brotherMarkersByIdRef.current[b.user_id] = marker;
+        brotherMarkerPosRef.current[b.user_id] = { lat: b.lat, lng: b.lng };
+      }
     }
 
+    // Remove markers for brothers no longer in the list
     for (const [id, marker] of Object.entries(brotherMarkersByIdRef.current)) {
       if (!nextIds.has(id)) {
         marker.remove();
         delete brotherMarkersByIdRef.current[id];
+        delete brotherMarkerPosRef.current[id];
       }
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [brothers, myLat, myLng, profile?.photo_url]);
+  }, [brothers, myLat, myLng]);
 
   useEffect(() => {
     return () => {
       for (const marker of Object.values(brotherMarkersByIdRef.current)) marker.remove();
       brotherMarkersByIdRef.current = {};
+      brotherMarkerPosRef.current = {};
       myMarkerRef.current?.remove();
       myMarkerRef.current = null;
+      myMarkerPosRef.current = null;
     };
   }, []);
 
