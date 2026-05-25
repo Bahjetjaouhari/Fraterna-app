@@ -187,12 +187,16 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         }
 
         // Use the shared LocationManager so it persists if JS also starts it later
-        if LocationServicePlugin.sharedLocationManager == nil {
-            LocationServicePlugin.sharedLocationManager = LocationManager()
+        // MUST create on the main thread — CLLocationManager requires a run loop
+        // and won't deliver delegate callbacks if created on a background thread.
+        DispatchQueue.main.async {
+            if LocationServicePlugin.sharedLocationManager == nil {
+                LocationServicePlugin.sharedLocationManager = LocationManager()
+            }
+            LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: tokenToUse)
+            LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
+            NSLog("[AppDelegate] LocationManager started on main thread with userId=\(userId.prefix(8)), tokenExpired=\(nowSeconds >= exp)")
         }
-        LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: tokenToUse)
-        LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
-        NSLog("[AppDelegate] LocationManager started with userId=\(userId), tokenExpired=\(nowSeconds >= exp)")
     }
 
     // MARK: - Silent Push Notifications & Background Fetch

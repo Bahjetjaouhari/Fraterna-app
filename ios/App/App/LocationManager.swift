@@ -43,7 +43,28 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     private var lastDebugLogTime: Date = .distantPast
     private let debugLogThrottle: TimeInterval = 10 // Only log once per 10 seconds to avoid flooding
 
+    // Dispatch CLLocationManager operations to the main thread.
+    // Apple requires all CLLocationManager methods (start/stop, accuracy, distanceFilter)
+    // to be called on the main thread. Calling from background threads causes
+    // didUpdateLocations to never fire — which was the root cause of stale iOS locations.
+    private func onMainThread(_ block: @escaping () -> Void) {
+        if Thread.isMainThread {
+            block()
+        } else {
+            DispatchQueue.main.async(execute: block)
+        }
+    }
+
     override init() {
+        // CLLocationManager MUST be created on the main thread for delegate
+        // callbacks to work. If we're on a background thread, log a warning.
+        // The AppDelegate restoreFromStorage method dispatches to main thread,
+        // but this safety check catches any other callers.
+        if !Thread.isMainThread {
+            NSLog("[LocationManager] ⚠️ WARNING: LocationManager created on background thread! Delegate callbacks may not work.")
+            NSLog("[LocationManager] ⚠️ This should be fixed by dispatching creation to the main thread.")
+        }
+
         // Read Supabase config from Info.plist, with HARDCODED fallbacks.
         // If Bundle.main.object(forInfoDictionaryKey:) returns nil (which can happen
         // in certain build configurations), ALL network calls silently fail because
@@ -61,16 +82,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         }
         super.init()
 
-        locationManager.delegate = self
-        locationManager.allowsBackgroundLocationUpdates = true
-        locationManager.showsBackgroundLocationIndicator = false
-        locationManager.pausesLocationUpdatesAutomatically = true
-        locationManager.activityType = .otherNavigation
+        // Configure CLLocationManager on the main thread to ensure delegate
+        // callbacks are properly connected to the main run loop.
+        onMainThread {
+            self.locationManager.delegate = self
+            self.locationManager.allowsBackgroundLocationUpdates = true
+            self.locationManager.showsBackgroundLocationIndicator = false
+            self.locationManager.pausesLocationUpdatesAutomatically = true
+            self.locationManager.activityType = .otherNavigation
 
-        // iOS 18+ requires CLServiceSession for background location in release builds
-        if #available(iOS 18.0, *) {
-            serviceSession = CLServiceSession(authorization: .always)
-            NSLog("[LocationManager] CLServiceSession created (iOS 18+)")
+            // iOS 18+ requires CLServiceSession for background location in release builds
+            if #available(iOS 18.0, *) {
+                self.serviceSession = CLServiceSession(authorization: .always)
+                NSLog("[LocationManager] CLServiceSession created (iOS 18+)")
+            }
         }
 
         // Listen for foreground/background transitions natively so we don't
@@ -102,37 +127,44 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // Without "Always", location updates stop when the app is suspended.
         let status = CLLocationManager.authorizationStatus()
         if status == .notDetermined {
-            locationManager.requestAlwaysAuthorization()
+            onMainThread { self.locationManager.requestAlwaysAuthorization() }
         } else if status == .authorizedWhenInUse {
             // On iOS 13+, upgrade to "Always" requires going to Settings
             // Request again — iOS may show the upgrade prompt
-            locationManager.requestAlwaysAuthorization()
+            onMainThread { self.locationManager.requestAlwaysAuthorization() }
         }
 
         // Configure for continuous background tracking:
-        // - kCLLocationAccuracyNearestTenMeters in background prevents iOS throttling
-        // - kCLLocationAccuracyBest in foreground for precise tracking
-        // - distanceFilter = kCLDistanceFilterNone = report every GPS update
-        if isInBackground {
-            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-            locationManager.distanceFilter = kCLDistanceFilterNone
-        } else {
-            locationManager.desiredAccuracy = kCLLocationAccuracyBest
-            locationManager.distanceFilter = kCLDistanceFilterNone
-        }
+        // All CLLocationManager operations must run on the main thread.
+        onMainThread {
+            // - kCLLocationAccuracyNearestTenMeters in background prevents iOS throttling
+            // - kCLLocationAccuracyBest in foreground for precise tracking
+            // - distanceFilter = kCLDistanceFilterNone = report every GPS update
+            if self.isInBackground {
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+            } else {
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+            }
 
-        locationManager.startUpdatingLocation()
-        // Significant location changes work even when the app is terminated.
-        // iOS relaunches the app with launchOptions[.location] when a significant change occurs.
-        locationManager.startMonitoringSignificantLocationChanges()
-        // Visit monitoring delivers callbacks even for stationary devices when iOS
-        // detects place transitions. Provides an additional heartbeat trigger.
-        locationManager.startMonitoringVisits()
+            self.locationManager.startUpdatingLocation()
+            // Significant location changes work even when the app is terminated.
+            // iOS relaunches the app with launchOptions[.location] when a significant change occurs.
+            self.locationManager.startMonitoringSignificantLocationChanges()
+            // Visit monitoring delivers callbacks even for stationary devices when iOS
+            // detects place transitions. Provides an additional heartbeat trigger.
+            self.locationManager.startMonitoringVisits()
+            // Force an initial location callback — this nudges iOS to deliver
+            // didUpdateLocations even if startUpdatingLocation alone doesn't trigger it
+            // (e.g., when CLLocationManager was created on a background thread).
+            self.locationManager.requestLocation()
+        }
 
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
         // Include build number so we can verify which build is actually running
-        writeImmediateDebugEvent("native_v40_start", userId: userId)
+        writeImmediateDebugEvent("native_v41_start", userId: userId)
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -151,9 +183,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     func stopLocationUpdates() {
-        locationManager.stopUpdatingLocation()
-        locationManager.stopMonitoringSignificantLocationChanges()
-        locationManager.stopMonitoringVisits()
+        onMainThread {
+            self.locationManager.stopUpdatingLocation()
+            self.locationManager.stopMonitoringSignificantLocationChanges()
+            self.locationManager.stopMonitoringVisits()
+        }
         stopHeartbeatTimer()
         stopBackgroundWiggleTimer()
         userId = nil
@@ -204,15 +238,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     func setTrackingEnabled(_ enabled: Bool) {
         trackingEnabled = enabled
         if enabled {
-            locationManager.startUpdatingLocation()
-            locationManager.startMonitoringSignificantLocationChanges()
-            locationManager.startMonitoringVisits()
+            onMainThread {
+                self.locationManager.startUpdatingLocation()
+                self.locationManager.startMonitoringSignificantLocationChanges()
+                self.locationManager.startMonitoringVisits()
+                self.locationManager.requestLocation()
+            }
             startHeartbeatTimer()
             sendHeartbeatNow()
         } else {
-            locationManager.stopUpdatingLocation()
-            locationManager.stopMonitoringSignificantLocationChanges()
-            locationManager.stopMonitoringVisits()
+            onMainThread {
+                self.locationManager.stopUpdatingLocation()
+                self.locationManager.stopMonitoringSignificantLocationChanges()
+                self.locationManager.stopMonitoringVisits()
+            }
             stopHeartbeatTimer()
             // Don't set last_heartbeat_at to null — let it expire naturally on server
             NSLog("[LocationManager] Tracking disabled — heartbeat will expire naturally")
@@ -234,20 +273,21 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Authorization changed to: \(status.rawValue)")
 
         if status == .authorizedAlways {
-            // Great — full background tracking is available
             if userId != nil {
-                locationManager.startUpdatingLocation()
-                locationManager.startMonitoringSignificantLocationChanges()
+                onMainThread {
+                    self.locationManager.startUpdatingLocation()
+                    self.locationManager.startMonitoringSignificantLocationChanges()
+                    self.locationManager.requestLocation()
+                }
             }
         } else if status == .authorizedWhenInUse {
-            // User only granted "When In Use" — background tracking will stop when app is suspended
-            // We need "Always" for reliable background tracking
             NSLog("[LocationManager] WARNING: Only 'When In Use' authorization. Background tracking will be limited.")
             NSLog("[LocationManager] User must go to Settings > Fraterna > Location > Always to enable full background tracking")
-            // Still start updates — they'll work while app is in foreground
             if userId != nil {
-                locationManager.startUpdatingLocation()
-                locationManager.startMonitoringSignificantLocationChanges()
+                onMainThread {
+                    self.locationManager.startUpdatingLocation()
+                    self.locationManager.startMonitoringSignificantLocationChanges()
+                }
             }
         } else if status == .denied || status == .restricted {
             NSLog("[LocationManager] Location authorization denied or restricted")
@@ -258,26 +298,30 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // are the authoritative source for accuracy transitions.
     func setForegroundAccuracy() {
         isInBackground = false
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
-        locationManager.startMonitoringSignificantLocationChanges()
-        locationManager.startMonitoringVisits()
+        onMainThread {
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            self.locationManager.startMonitoringSignificantLocationChanges()
+            self.locationManager.startMonitoringVisits()
+            self.locationManager.requestLocation()
+        }
         cancelGPSWindowTimer()
         isGPSEnabledByMovement = false
     }
 
     func setBackgroundAccuracy() {
-        // Background: GPS at NearestTenMeters with NO distance filter.
-        // distanceFilter=10 was blocking callbacks on stationary devices,
-        // causing stale locations and missed proximity alerts.
-        // kCLDistanceFilterNone ensures iOS delivers every GPS callback.
         isInBackground = true
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
-        locationManager.startMonitoringSignificantLocationChanges()
-        locationManager.startMonitoringVisits()
+        // Background: GPS at NearestTenMeters with NO distance filter.
+        // All CLLocationManager operations dispatched to main thread.
+        onMainThread {
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            self.locationManager.startMonitoringSignificantLocationChanges()
+            self.locationManager.startMonitoringVisits()
+            self.locationManager.requestLocation()
+        }
     }
 
     // MARK: - Native foreground/background observers
@@ -288,18 +332,23 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "switching_to_pulse_mode")
         if let uid = userId {
-            writeImmediateDebugEvent("native_bg_v40", userId: uid)
+            writeImmediateDebugEvent("native_bg_v41", userId: uid)
         }
 
-        // Background: use NearestTenMeters with NO distance filter so
-        // iOS delivers callbacks even on stationary devices.
-        locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
+        // All CLLocationManager operations MUST run on the main thread.
+        // UIKit notifications are delivered on the main thread, but we
+        // dispatch explicitly to be safe and consistent.
+        onMainThread {
+            // Background: use NearestTenMeters with NO distance filter so
+            // iOS delivers callbacks even on stationary devices.
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
 
-        // Keep significant location changes and visit monitoring as additional wakeup triggers
-        locationManager.startMonitoringSignificantLocationChanges()
-        locationManager.startMonitoringVisits()
+            // Keep significant location changes and visit monitoring as additional wakeup triggers
+            self.locationManager.startMonitoringSignificantLocationChanges()
+            self.locationManager.startMonitoringVisits()
+        }
 
         // Start heartbeat timer as backup (fires while app is alive, suspends with app)
         startHeartbeatTimer()
@@ -319,10 +368,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] App became active (native)")
         sendDebugLog("app_foreground")
 
-        // Restart full GPS for foreground
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
+        // Restart full GPS for foreground — must be on main thread
+        onMainThread {
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            self.locationManager.requestLocation()
+        }
 
         // Cancel any GPS window timer (we're in foreground now)
         cancelGPSWindowTimer()
@@ -415,6 +467,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         NSLog("[LocationManager] Location error: \(error.localizedDescription)")
+        sendDebugLog("location_error", details: error.localizedDescription.prefix(100).description)
     }
 
     func locationManagerDidPauseLocationUpdates(_ manager: CLLocationManager) {
@@ -432,7 +485,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     func locationManagerDidResumeLocationUpdates(_ manager: CLLocationManager) {
         NSLog("[LocationManager] Location updates resumed — user started moving, sending heartbeat")
         sendDebugLog("location_resumed", details: "sending_heartbeat")
-        // User started moving again — immediately send heartbeat and check proximity
+        // User started moving again — nudge GPS and send heartbeat
+        onMainThread {
+            self.locationManager.requestLocation()
+        }
         sendHeartbeatNow()
     }
 
@@ -485,16 +541,21 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             NSLog("[LocationManager] Background wiggle: forcing GPS refresh (no distance filter)")
             self.sendDebugLog("bg_wiggle_refresh")
 
-            // Switch to high accuracy with NO distance filter so iOS delivers
-            // a callback even if the device hasn't moved. distanceFilter=10
-            // was blocking callbacks on stationary devices.
-            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
-            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            // All CLLocationManager operations MUST run on the main thread.
+            // This timer fires on a background dispatch queue, so we must
+            // dispatch to main. Without this, didUpdateLocations is never called.
+            DispatchQueue.main.async {
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+                self.locationManager.startUpdatingLocation()
+                // Force an immediate location callback — this nudges iOS
+                // to deliver didUpdateLocations even for stationary devices
+                self.locationManager.requestLocation()
+            }
 
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 10) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
                 guard let self = self else { return }
                 self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-                // Keep distanceFilter=None so we always get callbacks
                 self.locationManager.distanceFilter = kCLDistanceFilterNone
             }
 
@@ -528,9 +589,12 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         sendDebugLog("gps_window_start", details: "movement_detected")
 
         isGPSEnabledByMovement = true
-        locationManager.desiredAccuracy = kCLLocationAccuracyBest
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
+        onMainThread {
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            self.locationManager.requestLocation()
+        }
 
         // Cancel existing timer if any
         cancelGPSWindowTimer()
@@ -552,11 +616,11 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Ending GPS window — switching to significant changes only")
         sendDebugLog("gps_window_end", details: "stopping_gps")
         isGPSEnabledByMovement = false
-        locationManager.stopUpdatingLocation()
-
-        // Keep significant location changes and visits active
-        locationManager.startMonitoringSignificantLocationChanges()
-        locationManager.startMonitoringVisits()
+        onMainThread {
+            self.locationManager.stopUpdatingLocation()
+            self.locationManager.startMonitoringSignificantLocationChanges()
+            self.locationManager.startMonitoringVisits()
+        }
     }
 
     private func cancelGPSWindowTimer() {
@@ -652,9 +716,14 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             sendProximityCheck(location: location)
         } else if isInBackground {
             // No last location — briefly start GPS to get one
-            locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
-            locationManager.distanceFilter = 10
-            locationManager.startUpdatingLocation()
+            // Must dispatch to main thread; must use kCLDistanceFilterNone
+            // (distanceFilter=10 blocks callbacks on stationary devices)
+            onMainThread {
+                self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
+                self.locationManager.distanceFilter = kCLDistanceFilterNone
+                self.locationManager.startUpdatingLocation()
+                self.locationManager.requestLocation()
+            }
         }
     }
 
@@ -670,16 +739,20 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Pulse: restarting GPS for heartbeat (no distance filter)")
         sendDebugLog("pulse_gps_start")
 
-        // Restart GPS with NO distance filter — this forces iOS to deliver
-        // a callback regardless of movement. distanceFilter=10 was blocking
-        // callbacks on stationary devices, causing stale locations.
-        locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
-        locationManager.distanceFilter = kCLDistanceFilterNone
-        locationManager.startUpdatingLocation()
+        // All CLLocationManager operations MUST run on the main thread.
+        // pulseLocationUpdate() is called from AppDelegate BGProcessingTask
+        // handler which runs on a background thread.
+        DispatchQueue.main.async {
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            // Force an immediate location callback
+            self.locationManager.requestLocation()
+        }
 
         // After 15 seconds, revert to normal accuracy and let iOS pause if stationary.
         // 15s gives iOS enough time to get a WiFi/cell fix even from cold start.
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 15) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
             guard let self = self else { return }
             self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
             self.locationManager.distanceFilter = kCLDistanceFilterNone
@@ -852,12 +925,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                     if let tracking = profile["tracking_enabled"] as? Bool {
                         self.trackingEnabled = tracking
                         if tracking {
-                            self.locationManager.startUpdatingLocation()
-                            self.locationManager.startMonitoringSignificantLocationChanges()
+                            self.onMainThread {
+                                self.locationManager.startUpdatingLocation()
+                                self.locationManager.startMonitoringSignificantLocationChanges()
+                            }
                             self.startHeartbeatTimer()
                         } else {
-                            self.locationManager.stopUpdatingLocation()
-                            self.locationManager.stopMonitoringSignificantLocationChanges()
+                            self.onMainThread {
+                                self.locationManager.stopUpdatingLocation()
+                                self.locationManager.stopMonitoringSignificantLocationChanges()
+                            }
                             self.stopHeartbeatTimer()
                         }
                     }
@@ -928,9 +1005,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     NSLog("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok_v39", details: "bg=\(self?.isInBackground ?? false)")
+                    self?.sendDebugLog("heartbeat_ok_v41", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
-                        self?.writeImmediateDebugEvent("native_hb_v39_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                        self?.writeImmediateDebugEvent("native_hb_v41_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
                     NSLog("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")

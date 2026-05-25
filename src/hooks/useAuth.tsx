@@ -158,7 +158,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
             // JS-side debug log to track when native service starts
             // Include build version so we can verify which build is running
             supabase.from('profiles').update({
-              last_debug_event: `js_v39_start @ ${new Date().toISOString()}`
+              last_debug_event: `js_v41_start @ ${new Date().toISOString()}`
             }).eq('id', userId).then(({ error }) => {
               if (error) console.error('[Auth] Debug log error:', error.message);
             });
