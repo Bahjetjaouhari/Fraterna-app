@@ -23,20 +23,29 @@ export async function logActivity(
   details?: Record<string, unknown>
 ): Promise<void> {
   try {
-    const { data: { user } } = await supabase.auth.getUser();
-    if (!user) return;
+    const { data: { user }, error: authError } = await supabase.auth.getUser();
+    if (authError) {
+      console.warn("[activityLog] auth.getUser error:", authError.message);
+    }
+    if (!user) {
+      console.warn("[activityLog] no user, skipping:", event);
+      return;
+    }
 
     const platform = Capacitor.isNativePlatform()
       ? Capacitor.getPlatform()
       : 'web';
 
-    supabase.from("user_activity_log").insert({
+    const { error: insertError } = await supabase.from("user_activity_log").insert({
       user_id: user.id,
       event,
       details: details ?? {},
       platform,
-    }).then(() => {});
-  } catch {
-    // Silent — activity logging never breaks the app
+    });
+    if (insertError) {
+      console.warn("[activityLog] insert error:", insertError.message);
+    }
+  } catch (err) {
+    console.warn("[activityLog] unexpected error:", err);
   }
 }
