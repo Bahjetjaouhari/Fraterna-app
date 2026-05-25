@@ -164,7 +164,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
         // Include build number so we can verify which build is actually running
-        writeImmediateDebugEvent("native_v42_start", userId: userId)
+        writeImmediateDebugEvent("native_v43_start", userId: userId)
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -332,7 +332,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "switching_to_pulse_mode")
         if let uid = userId {
-            writeImmediateDebugEvent("native_bg_v42", userId: uid)
+            writeImmediateDebugEvent("native_bg_v43", userId: uid)
         }
 
         // All CLLocationManager operations MUST run on the main thread.
@@ -401,8 +401,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     // MARK: - CLLocationManagerDelegate
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
+        // IMPORTANT: This callback MUST be called by iOS for background location to work.
+        // If this log never appears in debug_log, it means CLLocationManager delegate
+        // callbacks are not being delivered — check main thread, delegate setup, and permissions.
         guard let location = locations.last else { return }
         lastKnownLocation = location
+
+        // Use writeImmediateDebugEvent (NOT throttled) to ensure we ALWAYS see this
+        if let uid = userId {
+            writeImmediateDebugEvent("did_update_locations_\(isInBackground ? "bg" : "fg")", userId: uid)
+        }
 
         guard let userId = userId, trackingEnabled else { return }
 
@@ -467,6 +475,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
     func locationManager(_ manager: CLLocationManager, didFailWithError error: Error) {
         NSLog("[LocationManager] Location error: \(error.localizedDescription)")
+        // Use writeImmediateDebugEvent (NOT throttled) to ensure we see GPS errors
+        if let uid = userId {
+            writeImmediateDebugEvent("location_error_\(isInBackground ? "bg" : "fg")", userId: uid)
+        }
         sendDebugLog("location_error", details: error.localizedDescription.prefix(100).description)
     }
 
@@ -675,6 +687,19 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     /// and by AppDelegate when woken by silent push / background fetch.
     @objc func sendHeartbeatNow() {
         guard let userId = userId else { return }
+
+        // Diagnostic: log CLLocationManager state to understand why didUpdateLocations
+        // is never called. This uses writeImmediateDebugEvent (not throttled) so we
+        // always see it in profiles.last_debug_event.
+        let authStatus = CLLocationManager.authorizationStatus()
+        let cachedLocation = locationManager.location
+        let hasLocation = cachedLocation != nil ? "yes" : "no"
+        let locServicesEnabled = CLLocationManager.locationServicesEnabled()
+        let managerDelegate = locationManager.delegate != nil ? "yes" : "no"
+        writeImmediateDebugEvent("gps_diag_\(isInBackground ? "bg" : "fg")", userId: userId)
+        // Also write to debug_log with full details (may be throttled)
+        sendDebugLog("gps_diag", details: "auth=\(authStatus.rawValue) cached=\(hasLocation) svc=\(locServicesEnabled) delegate=\(managerDelegate) bg=\(isInBackground) lastKnown=\(lastKnownLocation != nil ? "yes" : "no")")
+
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
 
@@ -1023,9 +1048,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     NSLog("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok_v42", details: "bg=\(self?.isInBackground ?? false)")
+                    self?.sendDebugLog("heartbeat_ok_v43", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
-                        self?.writeImmediateDebugEvent("native_hb_v42_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                        self?.writeImmediateDebugEvent("native_hb_v43_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
                     NSLog("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
