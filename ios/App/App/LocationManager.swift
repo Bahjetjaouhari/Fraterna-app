@@ -164,7 +164,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
         // Include build number so we can verify which build is actually running
-        writeImmediateDebugEvent("native_v41_start", userId: userId)
+        writeImmediateDebugEvent("native_v42_start", userId: userId)
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -332,7 +332,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "switching_to_pulse_mode")
         if let uid = userId {
-            writeImmediateDebugEvent("native_bg_v41", userId: uid)
+            writeImmediateDebugEvent("native_bg_v42", userId: uid)
         }
 
         // All CLLocationManager operations MUST run on the main thread.
@@ -534,24 +534,29 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         if backgroundWiggleTimer != nil { return }
         guard userId != nil else { return }
 
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        // Fire on the main thread so CLLocationManager operations run directly
+        // without async dispatch. Async dispatch from background queues causes
+        // iOS to suspend the app before the main thread processes the block,
+        // which prevents didUpdateLocations from ever being called.
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
         timer.schedule(deadline: .now() + backgroundWiggleInterval, repeating: backgroundWiggleInterval, leeway: .seconds(30))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
             NSLog("[LocationManager] Background wiggle: forcing GPS refresh (no distance filter)")
             self.sendDebugLog("bg_wiggle_refresh")
 
-            // All CLLocationManager operations MUST run on the main thread.
-            // This timer fires on a background dispatch queue, so we must
-            // dispatch to main. Without this, didUpdateLocations is never called.
-            DispatchQueue.main.async {
-                self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
-                self.locationManager.distanceFilter = kCLDistanceFilterNone
-                self.locationManager.startUpdatingLocation()
-                // Force an immediate location callback — this nudges iOS
-                // to deliver didUpdateLocations even for stationary devices
-                self.locationManager.requestLocation()
+            // Protect with UIBackgroundTask so iOS doesn't suspend us before GPS delivers
+            var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+            bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "WiggleGPS") { [weak self] in
+                self?.endBackgroundTask(bgTaskId)
             }
+
+            // Already on main thread — call CLLocationManager directly
+            self.locationManager.desiredAccuracy = kCLLocationAccuracyBest
+            self.locationManager.distanceFilter = kCLDistanceFilterNone
+            self.locationManager.startUpdatingLocation()
+            // Force an immediate location callback
+            self.locationManager.requestLocation()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
                 guard let self = self else { return }
@@ -566,10 +571,15 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let lastLoc = self.lastKnownLocation {
                 self.sendProximityCheck(location: lastLoc)
             }
+
+            // End background task after GPS window completes
+            DispatchQueue.main.asyncAfter(deadline: .now() + 15) { [weak self] in
+                self?.endBackgroundTask(bgTaskId)
+            }
         }
         timer.resume()
         backgroundWiggleTimer = timer
-        NSLog("[LocationManager] Background wiggle timer started (every \(Int(backgroundWiggleInterval))s)")
+        NSLog("[LocationManager] Background wiggle timer started (every \(Int(backgroundWiggleInterval))s, main thread)")
         sendDebugLog("wiggle_timer_started")
     }
 
@@ -600,7 +610,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         cancelGPSWindowTimer()
 
         // Schedule timer to stop GPS after the window duration
-        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        // Fire on main thread so endGPSWindow can call CLLocationManager directly
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.main)
         timer.schedule(deadline: .now() + gpsWindowDuration, leeway: .seconds(2))
         timer.setEventHandler { [weak self] in
             guard let self = self else { return }
@@ -739,10 +750,16 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Pulse: restarting GPS for heartbeat (no distance filter)")
         sendDebugLog("pulse_gps_start")
 
+        // Protect with UIBackgroundTask so iOS doesn't suspend us before GPS starts
+        var bgTaskId: UIBackgroundTaskIdentifier = .invalid
+        bgTaskId = UIApplication.shared.beginBackgroundTask(withName: "PulseGPS") { [weak self] in
+            self?.endBackgroundTask(bgTaskId)
+        }
+
         // All CLLocationManager operations MUST run on the main thread.
         // pulseLocationUpdate() is called from AppDelegate BGProcessingTask
         // handler which runs on a background thread.
-        DispatchQueue.main.async {
+        onMainThread {
             self.locationManager.desiredAccuracy = kCLLocationAccuracyHundredMeters
             self.locationManager.distanceFilter = kCLDistanceFilterNone
             self.locationManager.startUpdatingLocation()
@@ -757,6 +774,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             self.locationManager.desiredAccuracy = kCLLocationAccuracyNearestTenMeters
             self.locationManager.distanceFilter = kCLDistanceFilterNone
             self.sendDebugLog("pulse_gps_end")
+            self.endBackgroundTask(bgTaskId)
         }
     }
 
@@ -1005,9 +1023,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     NSLog("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok_v41", details: "bg=\(self?.isInBackground ?? false)")
+                    self?.sendDebugLog("heartbeat_ok_v42", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
-                        self?.writeImmediateDebugEvent("native_hb_v41_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                        self?.writeImmediateDebugEvent("native_hb_v42_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
                     NSLog("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")

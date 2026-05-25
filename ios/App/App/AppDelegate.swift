@@ -59,7 +59,7 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         // Schedule the next task before processing this one
         scheduleHeartbeatBackgroundTask()
 
-        // Restore LocationManager if needed
+        // Restore LocationManager if needed (already dispatches to main thread internally)
         if LocationServicePlugin.sharedLocationManager == nil {
             restoreLocationManagerFromStorage()
         }
@@ -67,14 +67,15 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
         let locationManager = LocationServicePlugin.sharedLocationManager
 
         // "Pulse" mode: briefly restart GPS, send heartbeat
+        // pulseLocationUpdate and sendHeartbeatNow both use onMainThread internally
         locationManager?.pulseLocationUpdate()
         locationManager?.sendHeartbeatNow()
 
         // Also check proximity in background task
         locationManager?.sendProximityCheckFromPush()
 
-        // Tell iOS we're done — use a short delay to let network calls complete
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 20) {
+        // Tell iOS we're done — use a delay to let network calls and GPS complete
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 25) {
             task.setTaskCompleted(success: true)
         }
 
