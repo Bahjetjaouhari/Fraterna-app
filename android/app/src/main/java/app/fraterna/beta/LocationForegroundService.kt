@@ -48,7 +48,7 @@ class LocationForegroundService : Service() {
         const val ACTION_UPDATE_TOKEN = "app.fraterna.beta.action.UPDATE_TOKEN"
         const val EXTRA_AUTH_TOKEN = "app.fraterna.beta.extra.AUTH_TOKEN"
         const val EXTRA_USER_ID = "app.fraterna.beta.extra.USER_ID"
-        const val ONLINE_THRESHOLD_SECONDS = 600L // Must match is_user_active() SQL function (10 minutes)
+        const val ONLINE_THRESHOLD_SECONDS = 300L // Must match is_user_active() SQL function (5 minutes)
         private const val HEARTBEAT_ALARM_INTERVAL_MS = 90_000L // 90 seconds
         private const val HEARTBEAT_ALARM_REQUEST_CODE = 9001
 
@@ -510,8 +510,9 @@ class LocationForegroundService : Service() {
             PowerManager.PARTIAL_WAKE_LOCK,
             "fraterna:LocationServiceWakeLock"
         ).apply {
-            // No timeout — held for the lifetime of the service, released in stopLocationUpdates()
-            acquire()
+            // Hold for 10 minutes max — AlarmManager and the foreground service
+            // already keep the service alive; an infinite WakeLock drains battery.
+            acquire(10 * 60 * 1000L)
         }
     }
 
@@ -1072,9 +1073,12 @@ class LocationForegroundService : Service() {
                 // Skip if alerts disabled after refresh
                 if (profileSettings?.proximityAlertsEnabled == false) return@launch
 
-                // Server-side geo filter: only fetch locations within bounding box
-                val latDelta = radiusKm / 111.32 // ~degrees per km latitude
-                val lngDelta = radiusKm / (111.32 * cos(Math.toRadians(myLat)))
+                // Server-side geo filter: use a generous bounding box that covers
+                // both our radius and potential neighbors' radii (up to ~50km max).
+                // The actual distance check uses each neighbor's own radius.
+                val boundingBoxKm = max(radiusKm, 5.0)
+                val latDelta = boundingBoxKm / 111.32 // ~degrees per km latitude
+                val lngDelta = boundingBoxKm / (111.32 * cos(Math.toRadians(myLat)))
 
                 val minLat = myLat - latDelta
                 val maxLat = myLat + latDelta
@@ -1082,7 +1086,7 @@ class LocationForegroundService : Service() {
                 val maxLng = myLng + lngDelta
 
                 val nearbyUrl = "$supabaseUrl/rest/v1/locations" +
-                    "?select=lat,lng,user_id,profile:profiles!locations_user_id_fkey(id,full_name,stealth_mode,tracking_enabled,last_heartbeat_at)" +
+                    "?select=lat,lng,user_id,profile:profiles!locations_user_id_fkey(id,full_name,stealth_mode,tracking_enabled,last_heartbeat_at,proximity_alerts_enabled,proximity_radius_km)" +
                     "&user_id=neq.$userId" +
                     "&lat=gte.$minLat&lat=lte.$maxLat" +
                     "&lng=gte.$minLng&lng=lte.$maxLng" +
@@ -1126,9 +1130,14 @@ class LocationForegroundService : Service() {
                                 continue
                             }
 
+                            // Use the NEIGHBOR's radius — if they have 5km, they should
+                            // be notified at 5km regardless of our own radius setting.
+                            val theirAlertsEnabled = profileObj.optBoolean("proximity_alerts_enabled", true)
+                            val theirRadius = profileObj.optDouble("proximity_radius_km", 5.0)
+
                             // Calculate distance
                             val distance = haversineDistance(myLat, myLng, lat, lng)
-                            if (distance <= radiusKm) {
+                            if (distance <= theirRadius && theirAlertsEnabled) {
                                 val brotherId = profileObj.optString("id", "")
                                 val brotherName = profileObj.optString("full_name", "Un QH")
 
@@ -1143,7 +1152,7 @@ class LocationForegroundService : Service() {
 
                                 // Max 2 notifications per proximity session. Reset when they separate and re-enter.
                                 val prevDist = proximityLastDistances[brotherId]
-                                if (prevDist != null && prevDist > radiusKm) {
+                                if (prevDist != null && prevDist > theirRadius) {
                                     // They separated and came back: reset session
                                     proximityNotificationCounts[brotherId] = 0
                                 }
@@ -1158,7 +1167,7 @@ class LocationForegroundService : Service() {
                                 if (now - lastNotified >= PROXIMITY_COOLDOWN_MS) {
                                     proximityCooldowns[brotherId] = now
                                     proximityNotificationCounts[brotherId] = count + 1
-                                    showProximityNotification(brotherName, distance, radiusKm)
+                                    showProximityNotification(brotherName, distance, theirRadius)
                                     // Send push to the OTHER user telling them WE are nearby.
                                     // from_name must be OUR name, not the other user's name.
                                     val myName = currentUserName ?: "Un QH"

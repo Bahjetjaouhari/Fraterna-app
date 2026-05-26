@@ -128,75 +128,90 @@ class AppDelegate: UIResponder, UIApplicationDelegate, MessagingDelegate {
             return
         }
 
-        // Check if the access token is expired. If so, try to refresh it before
-        // starting the LocationManager, since heartbeats with an expired token
-        // will fail with 401 and the JS bridge is suspended in background.
+        // Check if the access token is expired. If so, refresh it asynchronously
+        // on a background queue — NEVER block the main thread with DispatchSemaphore
+        // as iOS watchdog kills apps that block the main thread for >10 seconds.
         let nowSeconds = Date().timeIntervalSince1970
         let exp = payload["exp"] as? TimeInterval ?? 0
-        var tokenToUse = accessToken
 
         if nowSeconds >= exp {
-            NSLog("[AppDelegate] Stored access token expired (exp=\(exp), now=\(nowSeconds)), attempting refresh")
-            // Try to refresh the token natively using the refresh_token from storage
+            NSLog("[AppDelegate] Stored access token expired (exp=\(exp), now=\(nowSeconds)), attempting async refresh")
             if let refreshToken = json["refresh_token"] as? String {
-                let semaphore = DispatchSemaphore(value: 0)
-                let refreshUrl = "\(Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String ?? "")/auth/v1/token?grant_type=refresh_token"
-                guard let url = URL(string: refreshUrl) else {
-                    NSLog("[AppDelegate] Invalid refresh URL")
-                    return
-                }
-                var request = URLRequest(url: url)
-                request.httpMethod = "POST"
-                request.setValue(Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String ?? "", forHTTPHeaderField: "apikey")
-                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-                request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
-
-                URLSession.shared.dataTask(with: request) { data, response, error in
-                    defer { semaphore.signal() }
-                    guard let data = data, error == nil,
-                          let httpResponse = response as? HTTPURLResponse,
-                          httpResponse.statusCode == 200 else {
-                        let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-                        NSLog("[AppDelegate] Token refresh failed: \(statusCode)")
-                        return
-                    }
-                    if let newSession = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                       let newToken = newSession["access_token"] as? String {
-                        tokenToUse = newToken
-                        NSLog("[AppDelegate] Token refreshed successfully on cold start")
-                        // Update UserDefaults with new session
-                        if let jsonString = UserDefaults.standard.string(forKey: "sb-vzlbvknauwvrqwpvtaqe-auth-token"),
-                           let jsonData = jsonString.data(using: .utf8),
-                           var storedSession = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
-                            storedSession["access_token"] = newToken
-                            if let newRefresh = newSession["refresh_token"] as? String {
-                                storedSession["refresh_token"] = newRefresh
-                            }
-                            storedSession["expires_at"] = newSession["expires_at"]
-                            storedSession["expires_in"] = newSession["expires_in"]
-                            if let updatedData = try? JSONSerialization.data(withJSONObject: storedSession),
-                               let updatedString = String(data: updatedData, encoding: .utf8) {
-                                UserDefaults.standard.set(updatedString, forKey: "sb-vzlbvknauwvrqwpvtaqe-auth-token")
-                            }
-                        }
-                    }
-                }.resume()
-                semaphore.wait(timeout: .now() + 15)
+                // Token refresh runs entirely on a background queue — no main thread blocking
+                restoreLocationManagerWithTokenRefresh(userId: userId, refreshToken: refreshToken, expiredToken: accessToken)
             } else {
-                NSLog("[AppDelegate] No refresh_token available, using expired token (will retry on heartbeat)")
+                NSLog("[AppDelegate] No refresh_token available, starting with expired token (will retry on heartbeat)")
+                startLocationManagerOnMainThread(userId: userId, token: accessToken)
             }
+        } else {
+            startLocationManagerOnMainThread(userId: userId, token: accessToken)
+        }
+    }
+
+    /// Refresh the Supabase token on a background queue, then start LocationManager on main thread.
+    /// This replaces the previous DispatchSemaphore-based approach that blocked the main thread
+    /// for up to 15 seconds, risking iOS watchdog termination.
+    private func restoreLocationManagerWithTokenRefresh(userId: String, refreshToken: String, expiredToken: String) {
+        let refreshUrl = "\(Bundle.main.object(forInfoDictionaryKey: "SupabaseUrl") as? String ?? "")/auth/v1/token?grant_type=refresh_token"
+        guard let url = URL(string: refreshUrl) else {
+            NSLog("[AppDelegate] Invalid refresh URL, starting with expired token")
+            startLocationManagerOnMainThread(userId: userId, token: expiredToken)
+            return
         }
 
-        // Use the shared LocationManager so it persists if JS also starts it later
-        // MUST create on the main thread — CLLocationManager requires a run loop
-        // and won't deliver delegate callbacks if created on a background thread.
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue(Bundle.main.object(forInfoDictionaryKey: "SupabaseAnonKey") as? String ?? "", forHTTPHeaderField: "apikey")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try? JSONSerialization.data(withJSONObject: ["refresh_token": refreshToken])
+
+        // URLSession completion runs on a background queue — no main thread blocking
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            var tokenToUse = expiredToken
+
+            if let data = data, error == nil,
+               let httpResponse = response as? HTTPURLResponse,
+               httpResponse.statusCode == 200,
+               let newSession = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+               let newToken = newSession["access_token"] as? String {
+                tokenToUse = newToken
+                NSLog("[AppDelegate] Token refreshed successfully (async)")
+                // Update UserDefaults with new session
+                let key = "sb-vzlbvknauwvrqwpvtaqe-auth-token"
+                if let jsonString = UserDefaults.standard.string(forKey: key),
+                   let jsonData = jsonString.data(using: .utf8),
+                   var storedSession = try? JSONSerialization.jsonObject(with: jsonData) as? [String: Any] {
+                    storedSession["access_token"] = newToken
+                    if let newRefresh = newSession["refresh_token"] as? String {
+                        storedSession["refresh_token"] = newRefresh
+                    }
+                    storedSession["expires_at"] = newSession["expires_at"]
+                    storedSession["expires_in"] = newSession["expires_in"]
+                    if let updatedData = try? JSONSerialization.data(withJSONObject: storedSession),
+                       let updatedString = String(data: updatedData, encoding: .utf8) {
+                        UserDefaults.standard.set(updatedString, forKey: key)
+                    }
+                }
+            } else {
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                NSLog("[AppDelegate] Token refresh failed: \(statusCode), starting with expired token")
+            }
+
+            self.startLocationManagerOnMainThread(userId: userId, token: tokenToUse)
+        }.resume()
+    }
+
+    /// Create and start the LocationManager on the main thread.
+    /// CLLocationManager requires a run loop and won't deliver delegate callbacks
+    /// if created on a background thread.
+    private func startLocationManagerOnMainThread(userId: String, token: String) {
         DispatchQueue.main.async {
             if LocationServicePlugin.sharedLocationManager == nil {
                 LocationServicePlugin.sharedLocationManager = LocationManager()
             }
-            LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: tokenToUse)
+            LocationServicePlugin.sharedLocationManager?.startLocationUpdates(userId: userId, authToken: token)
             LocationServicePlugin.sharedLocationManager?.setBackgroundAccuracy()
-            NSLog("[AppDelegate] LocationManager started on main thread with userId=\(userId.prefix(8)), tokenExpired=\(nowSeconds >= exp)")
+            NSLog("[AppDelegate] LocationManager started on main thread with userId=\(userId.prefix(8))")
         }
     }
 

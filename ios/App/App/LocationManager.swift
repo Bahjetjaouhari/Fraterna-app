@@ -87,7 +87,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         onMainThread {
             self.locationManager.delegate = self
             self.locationManager.allowsBackgroundLocationUpdates = true
-            self.locationManager.showsBackgroundLocationIndicator = false
+            self.locationManager.showsBackgroundLocationIndicator = true
             self.locationManager.pausesLocationUpdatesAutomatically = true
             self.locationManager.activityType = .otherNavigation
 
@@ -1310,8 +1310,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             NSLog("[LocationManager] Proximity: \(profileId) invalid heartbeat date")
             return
         }
-        let tenMinAgo = Date().addingTimeInterval(-600)
-        guard heartbeatDate > tenMinAgo else {
+        let fiveMinAgo = Date().addingTimeInterval(-300)
+        guard heartbeatDate > fiveMinAgo else {
             NSLog("[LocationManager] Proximity: \(profileId) heartbeat too old")
             return
         }
@@ -1321,8 +1321,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
 
         let theirRadius = jsonDouble(profile, key: "proximity_radius_km") ?? 5.0
         let theirAlerts = profile["proximity_alerts_enabled"] as? Bool ?? true
-        let myRadius = proximityRadiusKm
-        let alertRadius = min(myRadius, theirRadius)
+        // Use the NEIGHBOR's radius — if Vic has 5km, he should be notified
+        // at 5km regardless of our own radius setting.
+        let alertRadius = theirRadius
 
         guard distance <= alertRadius, theirAlerts else {
             NSLog("[LocationManager] Proximity: \(profileId) distance=\(String(format: "%.2f", distance))km > radius=\(alertRadius)km or theirAlerts=\(theirAlerts)")
