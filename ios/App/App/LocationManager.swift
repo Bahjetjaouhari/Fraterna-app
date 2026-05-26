@@ -164,7 +164,13 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         // IMMEDIATELY write a debug event to confirm native code is running
         // This does NOT use sendDebugLog (which might fail silently)
         // Include build number so we can verify which build is actually running
-        writeImmediateDebugEvent("native_v43_start", userId: userId)
+        writeImmediateDebugEvent("native_v44_start", userId: userId)
+
+        // Poll cached location immediately — if didUpdateLocations never fires,
+        // this reads locationManager.location directly as a fallback
+        onMainThread {
+            self.pollCachedLocation()
+        }
 
         // Start heartbeat timer immediately.
         // Note: this timer SUSPENDS when the app is suspended. It only fires
@@ -332,7 +338,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] App entered background (native)")
         sendDebugLog("app_background", details: "switching_to_pulse_mode")
         if let uid = userId {
-            writeImmediateDebugEvent("native_bg_v43", userId: uid)
+            writeImmediateDebugEvent("native_bg_v44", userId: uid)
         }
 
         // All CLLocationManager operations MUST run on the main thread.
@@ -348,6 +354,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             // Keep significant location changes and visit monitoring as additional wakeup triggers
             self.locationManager.startMonitoringSignificantLocationChanges()
             self.locationManager.startMonitoringVisits()
+
+            // Poll cached location — didUpdateLocations may never fire on some iOS builds
+            self.pollCachedLocation()
         }
 
         // Start heartbeat timer as backup (fires while app is alive, suspends with app)
@@ -374,6 +383,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             self.locationManager.distanceFilter = kCLDistanceFilterNone
             self.locationManager.startUpdatingLocation()
             self.locationManager.requestLocation()
+            // Poll cached location as fallback
+            self.pollCachedLocation()
         }
 
         // Cancel any GPS window timer (we're in foreground now)
@@ -399,6 +410,26 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     }
 
     // MARK: - CLLocationManagerDelegate
+
+    // MARK: - Cached Location Fallback
+    // On some iOS builds, didUpdateLocations never fires even though CLLocationManager
+    // has a cached location. This method reads locationManager.location directly as a
+    // fallback. It's called from sendHeartbeatNow, wiggle timer, and pulseLocationUpdate.
+    private func pollCachedLocation() {
+        let cached = locationManager.location
+        if let cachedLoc = cached {
+            // Only use cached location if we don't have one, or if it's newer
+            if lastKnownLocation == nil || cachedLoc.timestamp > lastKnownLocation!.timestamp {
+                lastKnownLocation = cachedLoc
+                NSLog("[LocationManager] pollCachedLocation: using cached location (age=\(Int(Date().timeIntervalSince(cachedLoc.timestamp)))s, accuracy=\(Int(cachedLoc.horizontalAccuracy))m)")
+                if let uid = userId {
+                    writeImmediateDebugEvent("cached_loc_used_\(isInBackground ? "bg" : "fg")", userId: uid)
+                }
+            }
+        } else {
+            NSLog("[LocationManager] pollCachedLocation: locationManager.location is nil")
+        }
+    }
 
     func locationManager(_ manager: CLLocationManager, didUpdateLocations locations: [CLLocation]) {
         // IMPORTANT: This callback MUST be called by iOS for background location to work.
@@ -514,6 +545,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         NSLog("[LocationManager] Visit detected at \(visit.coordinate), arriving: \(visit.arrivalDate), departing: \(visit.departureDate)")
         sendDebugLog("visit_detected", details: "arriving=\(visit.arrivalDate)")
 
+        // Poll cached location as fallback
+        pollCachedLocation()
+
         // Briefly switch to high accuracy for a fresh GPS fix on visit detection
         if isInBackground {
             startGPSWindowForMovement()
@@ -569,6 +603,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             self.locationManager.startUpdatingLocation()
             // Force an immediate location callback
             self.locationManager.requestLocation()
+
+            // Also poll cached location as fallback — didUpdateLocations may never
+            // fire on some iOS builds, but locationManager.location often has data
+            self.pollCachedLocation()
 
             DispatchQueue.main.asyncAfter(deadline: .now() + 10) { [weak self] in
                 guard let self = self else { return }
@@ -694,11 +732,19 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
         let authStatus = CLLocationManager.authorizationStatus()
         let cachedLocation = locationManager.location
         let hasLocation = cachedLocation != nil ? "yes" : "no"
+        let cachedAge = cachedLocation.map { Int(Date().timeIntervalSince($0.timestamp)) } ?? -1
         let locServicesEnabled = CLLocationManager.locationServicesEnabled()
         let managerDelegate = locationManager.delegate != nil ? "yes" : "no"
         writeImmediateDebugEvent("gps_diag_\(isInBackground ? "bg" : "fg")", userId: userId)
         // Also write to debug_log with full details (may be throttled)
-        sendDebugLog("gps_diag", details: "auth=\(authStatus.rawValue) cached=\(hasLocation) svc=\(locServicesEnabled) delegate=\(managerDelegate) bg=\(isInBackground) lastKnown=\(lastKnownLocation != nil ? "yes" : "no")")
+        sendDebugLog("gps_diag", details: "auth=\(authStatus.rawValue) cached=\(hasLocation) age=\(cachedAge)s svc=\(locServicesEnabled) delegate=\(managerDelegate) bg=\(isInBackground) lastKnown=\(lastKnownLocation != nil ? "yes" : "no")")
+
+        // Fallback: if didUpdateLocations never fires but CLLocationManager has a
+        // cached location, use it directly. This is the key fix for iOS builds
+        // where the delegate callback mechanism doesn't work.
+        if lastKnownLocation == nil {
+            pollCachedLocation()
+        }
 
         refreshTokenAsync { [weak self] in
             guard let self = self, let token = self.authToken else { return }
@@ -748,6 +794,10 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
     /// Uses lastKnownLocation if available, or starts a brief GPS window.
     func sendProximityCheckFromPush() {
         guard let userId = userId else { return }
+        // Poll cached location as fallback before checking lastKnownLocation
+        if lastKnownLocation == nil {
+            pollCachedLocation()
+        }
         if let location = lastKnownLocation {
             sendProximityCheck(location: location)
         } else if isInBackground {
@@ -759,6 +809,7 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
                 self.locationManager.distanceFilter = kCLDistanceFilterNone
                 self.locationManager.startUpdatingLocation()
                 self.locationManager.requestLocation()
+                self.pollCachedLocation()
             }
         }
     }
@@ -790,6 +841,8 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             self.locationManager.startUpdatingLocation()
             // Force an immediate location callback
             self.locationManager.requestLocation()
+            // Also poll cached location as fallback
+            self.pollCachedLocation()
         }
 
         // After 15 seconds, revert to normal accuracy and let iOS pause if stationary.
@@ -1048,9 +1101,9 @@ class LocationManager: NSObject, CLLocationManagerDelegate, UNUserNotificationCe
             if let httpResponse = response as? HTTPURLResponse {
                 if httpResponse.statusCode == 200 || httpResponse.statusCode == 204 {
                     NSLog("[LocationManager] ✓ Heartbeat sent")
-                    self?.sendDebugLog("heartbeat_ok_v43", details: "bg=\(self?.isInBackground ?? false)")
+                    self?.sendDebugLog("heartbeat_ok_v44", details: "bg=\(self?.isInBackground ?? false)")
                     if let uid = self?.userId {
-                        self?.writeImmediateDebugEvent("native_hb_v43_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
+                        self?.writeImmediateDebugEvent("native_hb_v44_\(self?.isInBackground == true ? "bg" : "fg")", userId: uid)
                     }
                 } else {
                     NSLog("[LocationManager] ✗ Heartbeat failed: \(httpResponse.statusCode)")
